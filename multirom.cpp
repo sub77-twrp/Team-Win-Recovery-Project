@@ -312,13 +312,16 @@ bool MultiROM::restorecon(std::string name)
 	bool replaced_contexts = false;
 
 	std::string file_contexts = getRomsPath() + name;
+	std::string seapp_contexts = file_contexts + "/boot/seapp_contexts";
 	file_contexts += "/boot/file_contexts";
 
 	if(access(file_contexts.c_str(), R_OK) >= 0)
 	{
 		gui_print("Using ROM's file_contexts\n");
 		rename("/file_contexts", "/file_contexts.orig");
+		rename("/seapp_contexts", "/seapp_contexts.orig");
 		system_args("cp -a \"%s\" /file_contexts", file_contexts.c_str());
+		system_args("cp -a \"%s\" /seapp_contexts", seapp_contexts.c_str());
 		replaced_contexts = true;
 	}
 
@@ -346,8 +349,10 @@ bool MultiROM::restorecon(std::string name)
 	restoreMounts();
 	res = true;
 exit:
-	if(replaced_contexts)
+	if(replaced_contexts) {
 		rename("/file_contexts.orig", "/file_contexts");
+		rename("/seapp_contexts.orig", "/seapp_contexts");
+	}
 	return res;
 }
 
