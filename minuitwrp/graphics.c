@@ -21,6 +21,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <sys/ioctl.h>
 #include <sys/mman.h>
@@ -30,19 +31,17 @@
 #include <linux/kd.h>
 
 #include <pixelflinger/pixelflinger.h>
-#include <png.h>
 
 #include "minui.h"
-
-#ifdef BOARD_USE_CUSTOM_RECOVERY_FONT
-#include BOARD_USE_CUSTOM_RECOVERY_FONT
-#else
-#include "font_10x18.h"
-#endif
+#include "../gui/placement.h"
 
 #ifdef RECOVERY_BGRA
 #define PIXEL_FORMAT GGL_PIXEL_FORMAT_BGRA_8888
 #define PIXEL_SIZE 4
+#endif
+#ifdef RECOVERY_RGBA
+#define PIXEL_FORMAT GGL_PIXEL_FORMAT_RGBA_8888
+#define PIXEL_SIZE   4
 #endif
 #ifdef RECOVERY_RGBX
 #define PIXEL_FORMAT GGL_PIXEL_FORMAT_RGBX_8888
@@ -74,9 +73,6 @@ GGLSurface gr_mem_surface;
 static unsigned gr_active_fb = 0;
 static unsigned double_buffering = 0;
 static int gr_is_curr_clr_opaque = 0;
-static int gr_rotation = 0; // angle - 0, 90, 180, 270
-static uint8_t **gr_rot_helpers = NULL;
-static int gr_freeze = 0;
 
 static int gr_fb_fd = -1;
 static int gr_vt_fd = -1;
@@ -98,14 +94,14 @@ int overlay_display_frame(int fd, GGLubyte* data, size_t size);
 #ifdef PRINT_SCREENINFO
 static void print_fb_var_screeninfo()
 {
-	printf("vi.xres: %d\n", vi.xres);
-	printf("vi.yres: %d\n", vi.yres);
-	printf("vi.xres_virtual: %d\n", vi.xres_virtual);
-	printf("vi.yres_virtual: %d\n", vi.yres_virtual);
-	printf("vi.xoffset: %d\n", vi.xoffset);
-	printf("vi.yoffset: %d\n", vi.yoffset);
-	printf("vi.bits_per_pixel: %d\n", vi.bits_per_pixel);
-	printf("vi.grayscale: %d\n", vi.grayscale);
+    printf("vi.xres: %d\n", vi.xres);
+    printf("vi.yres: %d\n", vi.yres);
+    printf("vi.xres_virtual: %d\n", vi.xres_virtual);
+    printf("vi.yres_virtual: %d\n", vi.yres_virtual);
+    printf("vi.xoffset: %d\n", vi.xoffset);
+    printf("vi.yoffset: %d\n", vi.yoffset);
+    printf("vi.bits_per_pixel: %d\n", vi.bits_per_pixel);
+    printf("vi.grayscale: %d\n", vi.grayscale);
 }
 #endif
 
@@ -202,6 +198,17 @@ static int get_framebuffer(GGLSurface *fb)
         vi.blue.length    = 8;
         vi.transp.offset  = 0;
         vi.transp.length  = 8;
+    } else if (PIXEL_FORMAT == GGL_PIXEL_FORMAT_RGBA_8888) {
+        fprintf(stderr, "Pixel format: RGBA_8888\n");
+        if (PIXEL_SIZE != 4)    fprintf(stderr, "E: Pixel Size mismatch!\n");
+        vi.red.offset     = 0;
+        vi.red.length     = 8;
+        vi.green.offset   = 8;
+        vi.green.length   = 8;
+        vi.blue.offset    = 16;
+        vi.blue.length    = 8;
+        vi.transp.offset  = 24;
+        vi.transp.length  = 8;
     } else if (PIXEL_FORMAT == GGL_PIXEL_FORMAT_RGBX_8888) {
         fprintf(stderr, "Pixel format: RGBX_8888\n");
         if (PIXEL_SIZE != 4)    fprintf(stderr, "E: Pixel Size mismatch!\n");
@@ -215,20 +222,20 @@ static int get_framebuffer(GGLSurface *fb)
         vi.transp.length  = 8;
     } else if (PIXEL_FORMAT == GGL_PIXEL_FORMAT_RGB_565) {
 #ifdef RECOVERY_RGB_565
-		fprintf(stderr, "Pixel format: RGB_565\n");
-		vi.blue.offset    = 0;
-		vi.green.offset   = 5;
-		vi.red.offset     = 11;
+        fprintf(stderr, "Pixel format: RGB_565\n");
+        vi.blue.offset    = 0;
+        vi.green.offset   = 5;
+        vi.red.offset     = 11;
 #else
         fprintf(stderr, "Pixel format: BGR_565\n");
-		vi.blue.offset    = 11;
-		vi.green.offset   = 5;
-		vi.red.offset     = 0;
+        vi.blue.offset    = 11;
+        vi.green.offset   = 5;
+        vi.red.offset     = 0;
 #endif
-		if (PIXEL_SIZE != 2)    fprintf(stderr, "E: Pixel Size mismatch!\n");
-		vi.blue.length    = 5;
-		vi.green.length   = 6;
-		vi.red.length     = 5;
+        if (PIXEL_SIZE != 2)    fprintf(stderr, "E: Pixel Size mismatch!\n");
+        vi.blue.length    = 5;
+        vi.green.length   = 6;
+        vi.red.length     = 5;
         vi.blue.msb_right = 0;
         vi.green.msb_right = 0;
         vi.red.msb_right = 0;
@@ -325,7 +332,7 @@ static int get_framebuffer(GGLSurface *fb)
     }
 
 #ifdef PRINT_SCREENINFO
-	print_fb_var_screeninfo();
+    print_fb_var_screeninfo();
 #endif
 
     return fd;
@@ -353,9 +360,6 @@ static void set_active_framebuffer(unsigned n)
 
 void gr_flip(void)
 {
-    if(gr_freeze)
-        return;
-
     if (-EINVAL == overlay_display_frame(gr_fb_fd, gr_mem_surface.data,
                                          (fi.line_length * vi.yres))) {
         GGLContext *gl = gr_context;
@@ -377,12 +381,8 @@ void gr_flip(void)
 #else
         /* copy data from the in-memory surface to the buffer we're about
          * to make active. */
-#ifndef TW_HAS_LANDSCAPE
         memcpy(gr_framebuffer[gr_active_fb].data, gr_mem_surface.data,
                vi.xres_virtual * vi.yres * PIXEL_SIZE);
-#else
-        gr_cpy_fb_with_rotation(gr_framebuffer[gr_active_fb].data, gr_mem_surface.data);
-#endif
 #endif
 
         /* inform the display driver */
@@ -406,183 +406,106 @@ void gr_color(unsigned char r, unsigned char g, unsigned char b, unsigned char a
 int gr_measureEx(const char *s, void* font)
 {
     GRFont* fnt = (GRFont*) font;
-    int total = 0;
-    unsigned pos;
-    unsigned off;
 
-    if (!fnt)   fnt = gr_font;
+    if (!fnt)
+        return 0;
 
-#ifndef TW_DISABLE_TTF
-    if(fnt->type == FONT_TYPE_TTF)
-        return gr_ttf_measureEx(s, font);
-#endif
-
-    while ((off = *s++))
-    {
-        off -= 32;
-        if (off < 96)
-            total += (fnt->offset[off+1] - fnt->offset[off]);
-    }
-    return total;
+    return gr_ttf_measureEx(s, font);
 }
 
 int gr_maxExW(const char *s, void* font, int max_width)
 {
     GRFont* fnt = (GRFont*) font;
-    int total = 0;
-    unsigned pos;
-    unsigned off;
 
-    if (!fnt)   fnt = gr_font;
+    if (!fnt)
+        return 0;
 
-#ifndef TW_DISABLE_TTF
-    if(fnt->type == FONT_TYPE_TTF)
-        return gr_ttf_maxExW(s, font, max_width);
-#endif
-
-    while ((off = *s++))
-    {
-        off -= 32;
-        if (off < 96) {
-            max_width -= (fnt->offset[off+1] - fnt->offset[off]);
-			if (max_width > 0) {
-				total++;
-			} else {
-				return total;
-			}
-		}
-    }
-    return total;
+    return gr_ttf_maxExW(s, font, max_width);
 }
 
 int gr_textEx(int x, int y, const char *s, void* pFont)
 {
     GGLContext *gl = gr_context;
     GRFont *font = (GRFont*) pFont;
+
+    if (!font)
+        return 0;
+
+    return gr_ttf_textExWH(gl, x, y, s, pFont, -1, -1);
+}
+
+int gr_textEx_scaleW(int x, int y, const char *s, void* pFont, int max_width, int placement, int scale)
+{
+    GGLContext *gl = gr_context;
+    void* vfont = pFont;
+    GRFont *font = (GRFont*) pFont;
     unsigned off;
     unsigned cwidth;
+    int y_scale = 0, measured_width, measured_height, ret, new_height;
 
-    /* Handle default font */
-    if (!font)  font = gr_font;
+    if (!s || strlen(s) == 0 || !font)
+        return 0;
 
-#ifndef TW_DISABLE_TTF
-    if(font->type == FONT_TYPE_TTF)
-        return gr_ttf_textExWH(gl, x, y, s, pFont, -1, -1);
-#endif
+    measured_height = gr_ttf_getMaxFontHeight(font);
 
-    gl->bindTexture(gl, &font->texture);
-    gl->texEnvi(gl, GGL_TEXTURE_ENV, GGL_TEXTURE_ENV_MODE, GGL_REPLACE);
-    gl->texGeni(gl, GGL_S, GGL_TEXTURE_GEN_MODE, GGL_ONE_TO_ONE);
-    gl->texGeni(gl, GGL_T, GGL_TEXTURE_GEN_MODE, GGL_ONE_TO_ONE);
-    gl->enable(gl, GGL_TEXTURE_2D);
-
-    while((off = *s++)) {
-        off -= 32;
-        cwidth = 0;
-        if (off < 96) {
-            cwidth = font->offset[off+1] - font->offset[off];
-			gl->texCoord2i(gl, (font->offset[off]) - x, 0 - y);
-			gl->recti(gl, x, y, x + cwidth, y + font->cheight);
-			x += cwidth;
+    if (scale) {
+        measured_width = gr_ttf_measureEx(s, vfont);
+        if (measured_width > max_width) {
+            // Adjust font size down until the text fits
+            void *new_font = gr_ttf_scaleFont(vfont, max_width, measured_width);
+            if (!new_font) {
+                printf("gr_textEx_scaleW new_font is NULL\n");
+                return 0;
+            }
+            measured_width = gr_ttf_measureEx(s, new_font);
+            // These next 2 lines adjust the y point based on the new font's height
+            new_height = gr_ttf_getMaxFontHeight(new_font);
+            y_scale = (measured_height - new_height) / 2;
+            vfont = new_font;
         }
+    } else
+        measured_width = gr_ttf_measureEx(s, vfont);
+
+    int x_adj = measured_width;
+    if (measured_width > max_width)
+        x_adj = max_width;
+
+    if (placement != TOP_LEFT && placement != BOTTOM_LEFT && placement != TEXT_ONLY_RIGHT) {
+        if (placement == CENTER || placement == CENTER_X_ONLY)
+            x -= (x_adj / 2);
+        else
+            x -= x_adj;
     }
 
-    gl->disable(gl, GGL_TEXTURE_2D);
-
-    return x;
+    if (placement != TOP_LEFT && placement != TOP_RIGHT) {
+        if (placement == CENTER || placement == TEXT_ONLY_RIGHT)
+            y -= (measured_height / 2);
+        else if (placement == BOTTOM_LEFT || placement == BOTTOM_RIGHT)
+            y -= measured_height;
+    }
+    return gr_ttf_textExWH(gl, x, y + y_scale, s, vfont, measured_width + x, -1);
 }
 
 int gr_textExW(int x, int y, const char *s, void* pFont, int max_width)
 {
     GGLContext *gl = gr_context;
     GRFont *font = (GRFont*) pFont;
-    unsigned off;
-    unsigned cwidth;
 
-    /* Handle default font */
-    if (!font)  font = gr_font;
+    if (!font)
+        return 0;
 
-#ifndef TW_DISABLE_TTF
-    if(font->type == FONT_TYPE_TTF)
-        return gr_ttf_textExWH(gl, x, y, s, pFont, max_width, -1);
-#endif
-
-    gl->bindTexture(gl, &font->texture);
-    gl->texEnvi(gl, GGL_TEXTURE_ENV, GGL_TEXTURE_ENV_MODE, GGL_REPLACE);
-    gl->texGeni(gl, GGL_S, GGL_TEXTURE_GEN_MODE, GGL_ONE_TO_ONE);
-    gl->texGeni(gl, GGL_T, GGL_TEXTURE_GEN_MODE, GGL_ONE_TO_ONE);
-    gl->enable(gl, GGL_TEXTURE_2D);
-
-    while((off = *s++)) {
-        off -= 32;
-        cwidth = 0;
-        if (off < 96) {
-            cwidth = font->offset[off+1] - font->offset[off];
-			if ((x + (int)cwidth) < max_width) {
-				gl->texCoord2i(gl, (font->offset[off]) - x, 0 - y);
-				gl->recti(gl, x, y, x + cwidth, y + font->cheight);
-				x += cwidth;
-			} else {
-				gl->texCoord2i(gl, (font->offset[off]) - x, 0 - y);
-				gl->recti(gl, x, y, max_width, y + font->cheight);
-				x = max_width;
-				return x;
-			}
-        }
-    }
-
-    gl->disable(gl, GGL_TEXTURE_2D);
-
-    return x;
+    return gr_ttf_textExWH(gl, x, y, s, pFont, max_width, -1);
 }
 
 int gr_textExWH(int x, int y, const char *s, void* pFont, int max_width, int max_height)
 {
     GGLContext *gl = gr_context;
     GRFont *font = (GRFont*) pFont;
-    unsigned off;
-    unsigned cwidth;
-	int rect_x, rect_y;
 
-    /* Handle default font */
-    if (!font)  font = gr_font;
+    if (!font)
+        return 0;
 
-#ifndef TW_DISABLE_TTF
-    if(font->type == FONT_TYPE_TTF)
-        return gr_ttf_textExWH(gl, x, y, s, pFont, max_width, max_height);
-#endif
-
-    gl->bindTexture(gl, &font->texture);
-    gl->texEnvi(gl, GGL_TEXTURE_ENV, GGL_TEXTURE_ENV_MODE, GGL_REPLACE);
-    gl->texGeni(gl, GGL_S, GGL_TEXTURE_GEN_MODE, GGL_ONE_TO_ONE);
-    gl->texGeni(gl, GGL_T, GGL_TEXTURE_GEN_MODE, GGL_ONE_TO_ONE);
-    gl->enable(gl, GGL_TEXTURE_2D);
-
-    while((off = *s++)) {
-        off -= 32;
-        cwidth = 0;
-        if (off < 96) {
-            cwidth = font->offset[off+1] - font->offset[off];
-			if ((x + (int)cwidth) < max_width)
-				rect_x = x + cwidth;
-			else
-				rect_x = max_width;
-			if (y + font->cheight < (unsigned int)(max_height))
-				rect_y = y + font->cheight;
-			else
-				rect_y = max_height;
-
-			gl->texCoord2i(gl, (font->offset[off]) - x, 0 - y);
-			gl->recti(gl, x, y, rect_x, rect_y);
-			x += cwidth;
-			if (x > max_width)
-				return x;
-        }
-    }
-
-    gl->disable(gl, GGL_TEXTURE_2D);
-
-    return x;
+    return gr_ttf_textExWH(gl, x, y, s, pFont, max_width, max_height);
 }
 
 void gr_clip(int x, int y, int w, int h)
@@ -695,134 +618,14 @@ unsigned int gr_get_height(gr_surface surface) {
     return ((GGLSurface*) surface)->height;
 }
 
-void* gr_loadFont(const char* fontName)
-{
-    int fd;
-    GRFont *font = 0;
-    GGLSurface *ftex;
-    unsigned char *bits, *rle;
-    unsigned char *in, data;
-    unsigned width, height;
-    unsigned element;
-
-    fd = open(fontName, O_RDONLY);
-    if (fd == -1)
-    {
-        char tmp[128];
-#ifdef TW_HAS_LANDSCAPE
-        if(gr_get_rotation()%180 != 0)
-            snprintf(tmp, sizeof(tmp), TWRES "landscape/fonts/%s.dat", fontName);
-        else
-#endif
-        {
-            snprintf(tmp, sizeof(tmp), TWRES "fonts/%s.dat", fontName);
-        }
-
-        fd = open(tmp, O_RDONLY);
-        if (fd == -1)
-            return NULL;
-    }
-
-    font = calloc(sizeof(*font), 1);
-    ftex = &font->texture;
-
-    read(fd, &width, sizeof(unsigned));
-    read(fd, &height, sizeof(unsigned));
-    read(fd, font->offset, sizeof(unsigned) * 96);
-    font->offset[96] = width;
-
-    bits = malloc(width * height);
-    memset(bits, 0, width * height);
-
-    unsigned pos = 0;
-    while (pos < width * height)
-    {
-        int bit;
-
-        read(fd, &data, 1);
-        for (bit = 0; bit < 8; bit++)
-        {
-            if (data & (1 << (7-bit)))  bits[pos++] = 255;
-            else                        bits[pos++] = 0;
-
-            if (pos == width * height)  break;
-        }
-    }
-    close(fd);
-
-    ftex->version = sizeof(*ftex);
-    ftex->width = width;
-    ftex->height = height;
-    ftex->stride = width;
-    ftex->data = (void*) bits;
-    ftex->format = GGL_PIXEL_FORMAT_A_8;
-    font->type = FONT_TYPE_TWRP;
-    font->cheight = height;
-    font->ascent = height - 2;
-    return (void*) font;
-}
-
-void gr_freeFont(void *font)
-{
-    GRFont *f = font;
-    free(f->texture.data);
-    free(f);
-}
-
 int gr_getMaxFontHeight(void *font)
 {
     GRFont *fnt = (GRFont*) font;
 
-    if (!fnt)   fnt = gr_font;
-    if (!fnt)   return -1;
+    if (!fnt)
+        return -1;
 
-#ifndef TW_DISABLE_TTF
-    if(fnt->type == FONT_TYPE_TTF)
-        return gr_ttf_getMaxFontHeight(font);
-#endif
-
-    return fnt->cheight;
-}
-
-static void gr_init_font(void)
-{
-    int fontRes;
-    GGLSurface *ftex;
-    unsigned char *bits, *rle;
-    unsigned char *in, data;
-    unsigned width, height;
-    unsigned element;
-
-    gr_font = calloc(sizeof(*gr_font), 1);
-    ftex = &gr_font->texture;
-
-    width = font.width;
-    height = font.height;
-
-    bits = malloc(width * height);
-    rle = bits;
-
-    in = font.rundata;
-    while((data = *in++))
-    {
-        memset(rle, (data & 0x80) ? 255 : 0, data & 0x7f);
-        rle += (data & 0x7f);
-    }
-    for (element = 0; element < 97; element++)
-    {
-        gr_font->offset[element] = (element * font.cwidth);
-    }
-
-    ftex->version = sizeof(*ftex);
-    ftex->width = width;
-    ftex->height = height;
-    ftex->stride = width;
-    ftex->data = (void*) bits;
-    ftex->format = GGL_PIXEL_FORMAT_A_8;
-    gr_font->type = FONT_TYPE_TWRP;
-    gr_font->cheight = height;
-    gr_font->ascent = height - 2;
-    return;
+    return gr_ttf_getMaxFontHeight(font);
 }
 
 int gr_init(void)
@@ -830,7 +633,6 @@ int gr_init(void)
     gglInit(&gr_context);
     GGLContext *gl = gr_context;
 
-    gr_init_font();
     gr_vt_fd = open("/dev/tty0", O_RDWR | O_SYNC);
     if (gr_vt_fd < 0) {
         // This is non-fatal; post-Cupcake kernels don't have tty0.
@@ -885,8 +687,6 @@ void gr_exit(void)
 
     free(gr_mem_surface.data);
 
-    free(gr_rot_helpers);
-
     ioctl(gr_vt_fd, KDSETMODE, (void*) KD_TEXT);
     close(gr_vt_fd);
     gr_vt_fd = -1;
@@ -894,20 +694,10 @@ void gr_exit(void)
 
 int gr_fb_width(void)
 {
-    return gr_mem_surface.width;
-}
-
-int gr_fb_height(void)
-{
-    return gr_mem_surface.height;
-}
-
-int gr_screen_width(void)
-{
     return gr_framebuffer[0].width;
 }
 
-int gr_screen_height(void)
+int gr_fb_height(void)
 {
     return gr_framebuffer[0].height;
 }
@@ -961,193 +751,4 @@ int gr_free_surface(gr_surface surface)
 void gr_write_frame_to_file(int fd)
 {
     write(fd, gr_mem_surface.data, vi.xres * vi.yres * vi.bits_per_pixel / 8);
-}
-
-void gr_set_rotation(int rot)
-{
-    gr_rotation = rot;
-}
-
-int gr_get_rotation(void)
-{
-    return gr_rotation;
-}
-
-#ifdef TW_HAS_LANDSCAPE
-void gr_cpy_fb_with_rotation(void *dst, void *src)
-{
-    switch(gr_rotation)
-    {
-        case 0:
-            memcpy(dst, src, vi.xres_virtual * vi.yres * PIXEL_SIZE);
-            break;
-        case 90:
-        {
-#if PIXEL_SIZE == 4
-            gr_rotate_90deg_4b((uint32_t*)dst, (uint32_t*)src);
-#elif PIXEL_SIZE == 2
-            gr_rotate_90deg_2b((uint16_t*)dst, (uint16_t*)src);
-#endif
-            break;
-        }
-        case 180:
-        {
-#if PIXEL_SIZE == 4
-            gr_rotate_180deg_4b((uint32_t*)dst, (uint32_t*)src);
-#elif PIXEL_SIZE == 2
-            gr_rotate_180deg_2b((uint16_t*)dst, (uint16_t*)src);
-#endif
-            break;
-        }
-        case 270:
-        {
-#if PIXEL_SIZE == 4
-            gr_rotate_270deg_4b((uint32_t*)dst, (uint32_t*)src);
-#elif PIXEL_SIZE == 2
-            gr_rotate_270deg_2b((uint16_t*)dst, (uint16_t*)src);
-#endif
-            break;
-        }
-    }
-}
-
-void gr_update_surface_dimensions()
-{
-    if(gr_rotation%180 == 0)
-    {
-        gr_mem_surface.width = vi.xres;
-        gr_mem_surface.height = vi.yres;
-        if(gr_rotation == 0)
-            gr_mem_surface.stride = vi.xres_virtual;
-        else
-            gr_mem_surface.stride = vi.xres;
-    }
-    else
-    {
-        gr_mem_surface.width = vi.yres;
-        gr_mem_surface.height = vi.xres;
-        gr_mem_surface.stride = vi.yres;
-    }
-    GGLContext *gl = gr_context;
-    gl->colorBuffer(gl, &gr_mem_surface);
-}
-
-void gr_rotate_90deg_4b(uint32_t *dst, uint32_t *src)
-{
-    uint32_t i;
-    int32_t x;
-
-    if(!gr_rot_helpers)
-        gr_rot_helpers = malloc(gr_mem_surface.height*sizeof(uint32_t*));
-
-    uint32_t **helpers = (uint32_t**)gr_rot_helpers;
-
-    helpers[0] = src;
-    for(i = 1; i < gr_mem_surface.height; ++i)
-        helpers[i] = helpers[i-1] + gr_mem_surface.width;
-
-    for(i = 0; i < gr_mem_surface.width; ++i)
-    {
-        for(x = gr_mem_surface.height-1; x >= 0; --x)
-            *dst++ = *(helpers[x]++);
-        dst += vi.xres_virtual - vi.xres;
-    }
-}
-
-void gr_rotate_90deg_2b(uint16_t *dst, uint16_t *src)
-{
-    uint32_t i;
-    int32_t x;
-
-    if(!gr_rot_helpers)
-        gr_rot_helpers = malloc(gr_mem_surface.height*sizeof(uint16_t*));
-
-    uint16_t **helpers = (uint16_t**)gr_rot_helpers;
-
-    helpers[0] = src;
-    for(i = 1; i < gr_mem_surface.height; ++i)
-        helpers[i] = helpers[i-1] + gr_mem_surface.width;
-
-    for(i = 0; i < gr_mem_surface.width; ++i)
-    {
-        for(x = gr_mem_surface.height-1; x >= 0; --x)
-            *dst++ = *(helpers[x]++);
-        dst += vi.xres_virtual - vi.xres;
-    }
-}
-
-void gr_rotate_270deg_4b(uint32_t *dst, uint32_t *src)
-{
-    if(!gr_rot_helpers)
-        gr_rot_helpers = malloc(gr_mem_surface.height*sizeof(uint32_t*));
-
-    uint32_t i, x;
-    uint32_t **helpers = (uint32_t**)gr_rot_helpers;
-
-    helpers[0] = src + gr_mem_surface.width-1;
-    for(i = 1; i < gr_mem_surface.height; ++i)
-        helpers[i] = helpers[i-1] + gr_mem_surface.width;
-
-    for(i = 0; i < gr_mem_surface.width; ++i)
-    {
-        for(x = 0; x < gr_mem_surface.height; ++x)
-            *dst++ = *(helpers[x]--);
-        dst += vi.xres_virtual - vi.xres;
-    }
-}
-
-void gr_rotate_270deg_2b(uint16_t *dst, uint16_t *src)
-{
-    if(!gr_rot_helpers)
-        gr_rot_helpers = malloc(gr_mem_surface.height*sizeof(uint16_t*));
-
-    uint32_t i, x;
-    uint16_t **helpers = (uint16_t**)gr_rot_helpers;
-
-    helpers[0] = src + gr_mem_surface.width-1;
-    for(i = 1; i < gr_mem_surface.height; ++i)
-        helpers[i] = helpers[i-1] + gr_mem_surface.width;
-
-    for(i = 0; i < gr_mem_surface.width; ++i)
-    {
-        for(x = 0; x < gr_mem_surface.height; ++x)
-            *dst++ = *(helpers[x]--);
-        dst += vi.xres_virtual - vi.xres;
-    }
-}
-
-void gr_rotate_180deg_4b(uint32_t *dst, uint32_t *src)
-{
-    uint32_t i, x;
-    int len = vi.xres * vi.yres;
-    src += len;
-    for(i = 0; i < gr_mem_surface.height; ++i)
-    {
-        for(x = 0; x < gr_mem_surface.width; ++x)
-            *dst++ = *src--;
-        dst += vi.xres_virtual - vi.xres;
-    }
-}
-
-void gr_rotate_180deg_2b(uint16_t *dst, uint16_t *src)
-{
-    uint32_t i, x;
-    int len = vi.xres * vi.yres;
-    src += len;
-    for(i = 0; i < gr_mem_surface.height; ++i)
-    {
-        for(x = 0; x < gr_mem_surface.width; ++x)
-            *dst++ = *src--;
-        dst += vi.xres_virtual - vi.xres;
-    }
-}
-
-#endif // TW_HAS_LANDSCAPE
-
-void gr_freeze_fb(int freeze)
-{
-    if(freeze)
-        ++gr_freeze;
-    else if(!freeze && gr_freeze > 0)
-        --gr_freeze;
 }

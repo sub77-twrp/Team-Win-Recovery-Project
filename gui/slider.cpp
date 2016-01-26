@@ -80,6 +80,7 @@ GUISlider::GUISlider(xml_node<>* node) : GUIObject(node)
 		sSliderLabel->GetCurrentBounds(w, h);
 		int sTextY = mRenderY + ((mRenderH - h) / 2);
 		sSliderLabel->SetRenderPos(sTextX, sTextY);
+		sSliderLabel->SetMaxWidth(mRenderW);
 	}
 	if (sTouch && sTouch->GetResource())
 	{
@@ -149,9 +150,6 @@ int GUISlider::NotifyTouch(TOUCH_STATE state, int x, int y)
 		return -1;
 
 	static bool dragging = false;
-
-	if (!isConditionTrue())
-		return 0;
 
 	switch (state)
 	{

@@ -11,13 +11,12 @@
 
 	<include>
 		<xmlfile name="portrait.xml" />
-		<xmlfile name="multirom.xml" />
 	</include>
 
 	<resources>
-		<resource name="font" type="font" filename="RobotoCondensed-Regular.ttf" size="20" fallback="Roboto-Regular-20" />
-		<resource name="mediumfont" type="font" filename="RobotoCondensed-Regular.ttf" size="20" fallback="Roboto-Regular-20" />
-		<resource name="filelist" type="font" filename="RobotoCondensed-Regular.ttf" size="20" fallback="Roboto-Regular-20" />
+		<resource name="font" type="font" filename="RobotoCondensed-Regular.ttf" size="20" />
+		<resource name="mediumfont" type="font" filename="RobotoCondensed-Regular.ttf" size="20" />
+		<resource name="filelist" type="font" filename="RobotoCondensed-Regular.ttf" size="20" />
 		<resource name="fixed" type="font" filename="DroidSansMono.ttf" size="16" />
 		<resource name="twrplogo" type="image" filename="twrplogo" retainaspect="1" />
 		<resource name="main_button" type="image" filename="menu-button" />
@@ -196,39 +195,19 @@
 		<variable name="slidervalue_padding" value="13" />
 		<variable name="slidervalue_sliderw" value="7" />
 		<variable name="slidervalue_sliderh" value="40" />
-		<variable name="pattern_x" value="90" />
+		<variable name="pattern_button3_x" value="117" />
+		<variable name="pattern_button4_x" value="180" />
+		<variable name="pattern_button5_x" value="243" />
+		<variable name="pattern_button6_x" value="306" />
+		<variable name="pattern_x" value="41" />
 		<variable name="pattern_y" value="250" />
-		<variable name="pattern_width" value="300" />
+		<variable name="pattern_width" value="398" />
 		<variable name="pattern_dot_color" value="#33B5E5" />
 		<variable name="pattern_dot_color_active" value="#FFFFFF" />
 		<variable name="pattern_dot_radius" value="12" />
 		<variable name="pattern_line_color" value="#33B5E5" />
 		<variable name="pattern_line_width" value="9" />
-
-		<variable name="mrom_inject_txt_x" value="612" />
-		<variable name="mrom_inject_txt_y" value="725" />
-		<variable name="mrom_wipe_col1_x" value="100" />
-		<variable name="mrom_wipe_col2_x" value="306" />
-		<variable name="mrom_wipe_col3_x" value="512" />
-		<variable name="mrom_boot_delay_sec_x" value="270" />
-		<variable name="mrom_boot_delay_add_x" value="330" />
-		<variable name="mrom_boot_rom_h" value="400" />
-		<variable name="mrom_ubuntu_desktop_x" value="200" />
-		<variable name="mrom_ubuntu_touch_x" value="500" />
-		<variable name="mrom_install_loc_h" value="250" />
-		<variable name="mrom_install_refresh_y" value="590" />
-		<variable name="mrom_img1_text_y" value="350" />
-		<variable name="mrom_img2_text_y" value="470" />
-		<variable name="mrom_img3_text_y" value="590" />
-		<variable name="mrom_img4_text_y" value="710" />
-		<variable name="mrom_img5_text_y" value="830" />
-		<variable name="mrom_img1_btn_y" value="300" />
-		<variable name="mrom_img2_btn_y" value="420" />
-		<variable name="mrom_img3_btn_y" value="540" />
-		<variable name="mrom_img4_btn_y" value="660" />
-		<variable name="mrom_img5_btn_y" value="780" />
-		<variable name="mrom_rom_loc_list_h" value="440" />
-		<variable name="mrom_swap_list_h" value="230" />
+		<variable name="pattern_cancel_y" value="672" />
 	</variables>
 
 	<mousecursor>
@@ -239,7 +218,7 @@
 
 	<templates>
 		<template name="header">
-			<background color="%backgroundcolor%" />
+			<background color="#000000FF" />
 
 			<object type="fill" color="%button_fill_color%">
 				<placement x="0" y="0" w="480" h="98" />
@@ -257,7 +236,7 @@
 			<object type="text" color="%text_color%">
 				<font resource="font" />
 				<placement x="100" y="10" />
-				<text>MultiROM TWRP %tw_mrom_rec_version% (v%tw_version%)</text>
+				<text>Team Win Recovery Project  v%tw_version%</text>
 			</object>
 
 			<object type="text" color="%text_color%">
@@ -290,14 +269,7 @@
 				<conditions>
 					<condition var1="tw_no_cpu_temp" var2="0" />
 				</conditions>
-				<text>CPU: %tw_cpu_temp%° C</text>
-			</object>
-
-			<object type="text" color="%text_fail_color%">
-				<font resource="font" />
-				<placement x="120" y="45" />
-				<condition var1="multirom_rom_name_title" var2="1" />
-				<text>Using ROM: %tw_multirom_rom_name%</text>
+				<text>CPU: %tw_cpu_temp% &#xB0;C</text>
 			</object>
 
 			<object type="button">
@@ -349,6 +321,40 @@
 				<placement x="%console_x%" y="%row2_y%" w="%console_width%" h="%console_action_height%" />
 				<color foreground="%console_foreground%" background="%console_background%" scroll="%console_scroll%" />
 				<font resource="fixed" />
+			</object>
+		</template>
+
+		<template name="pattern_options">
+			<object type="button">
+				<placement x="%pattern_button3_x%" y="%row2_text_y%" />
+				<font resource="font" color="%button_text_color%" />
+				<text>3x3</text>
+				<image resource="sort_button" />
+				<action function="set">tw_gui_pattern_grid_size=3</action>
+			</object>
+
+			<object type="button">
+				<placement x="%pattern_button4_x%" y="%row2_text_y%" />
+				<font resource="font" color="%button_text_color%" />
+				<text>4x4</text>
+				<image resource="sort_button" />
+				<action function="set">tw_gui_pattern_grid_size=4</action>
+			</object>
+
+			<object type="button">
+				<placement x="%pattern_button5_x%" y="%row2_text_y%" />
+				<font resource="font" color="%button_text_color%" />
+				<text>5x5</text>
+				<image resource="sort_button" />
+				<action function="set">tw_gui_pattern_grid_size=5</action>
+			</object>
+
+			<object type="button">
+				<placement x="%pattern_button6_x%" y="%row2_text_y%" />
+				<font resource="font" color="%button_text_color%" />
+				<text>6x6</text>
+				<image resource="sort_button" />
+				<action function="set">tw_gui_pattern_grid_size=6</action>
 			</object>
 		</template>
 

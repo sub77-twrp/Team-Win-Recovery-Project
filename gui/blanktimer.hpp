@@ -28,7 +28,6 @@ class blanktimer
 public:
 	blanktimer();
 
-	void blankScreen(void);
 	// set timeout in seconds
 	void setTime(int newtime);
 

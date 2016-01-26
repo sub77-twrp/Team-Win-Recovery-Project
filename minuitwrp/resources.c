@@ -23,6 +23,7 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/types.h>
+#include <string.h>
 
 #include <linux/fb.h>
 #include <linux/kd.h>
@@ -59,16 +60,9 @@ static int open_png(const char* name, png_structp* png_ptr, png_infop* info_ptr,
     unsigned char header[8];
     int result = 0;
 
-#ifdef TW_HAS_LANDSCAPE
-    if(gr_get_rotation()%180 != 0)
-        snprintf(resPath, sizeof(resPath), TWRES "landscape/images/%s.png", name);
-    else
-#endif
-    {
-        snprintf(resPath, sizeof(resPath), TWRES "images/%s.png", name);
-    }
+    snprintf(resPath, sizeof(resPath)-1, TWRES "images/%s.png", name);
     printf("open_png %s\n", resPath);
-
+    resPath[sizeof(resPath)-1] = '\0';
     FILE* fp = fopen(resPath, "rb");
     if (fp == NULL) {
         fp = fopen(name, "rb");
@@ -271,15 +265,9 @@ int res_create_surface_jpg(const char* name, gr_surface* pSurface) {
     FILE* fp = fopen(name, "rb");
     if (fp == NULL) {
         char resPath[256];
-#ifdef TW_HAS_LANDSCAPE
-        if(gr_get_rotation()%180 != 0)
-            snprintf(resPath, sizeof(resPath), TWRES "landscape/images/%s", name);
-        else
-#endif
-        {
-            snprintf(resPath, sizeof(resPath), TWRES "images/%s", name);
-        }
 
+        snprintf(resPath, sizeof(resPath)-1, TWRES "images/%s", name);
+        resPath[sizeof(resPath)-1] = '\0';
         fp = fopen(resPath, "rb");
         if (fp == NULL) {
             result = -1;

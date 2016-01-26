@@ -38,6 +38,7 @@
 #include <map>
 #include <fstream>
 #include <sstream>
+#include <pthread.h>
 
 #include "variables.h"
 #include "data.hpp"
@@ -49,13 +50,10 @@
 #include "find_file.hpp"
 #include "set_metadata.h"
 #include <cutils/properties.h>
+#include "gui/gui.hpp"
 
 #define DEVID_MAX 64
 #define HWID_MAX 32
-
-#ifndef TW_MAX_BRIGHTNESS
-#define TW_MAX_BRIGHTNESS 255
-#endif
 
 extern "C"
 {
@@ -65,7 +63,7 @@ extern "C"
 	void gui_notifyVarChange(const char *name, const char* value);
 }
 
-#define FILE_VERSION 0x00010001
+#define FILE_VERSION 0x00010010
 
 using namespace std;
 
@@ -76,7 +74,11 @@ int                                     DataManager::mInitialized = 0;
 
 extern bool datamedia;
 
+#ifndef PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP
 pthread_mutex_t DataManager::m_valuesLock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER;
+#else
+pthread_mutex_t DataManager::m_valuesLock = PTHREAD_RECURSIVE_MUTEX_INITIALIZER_NP;
+#endif
 
 // Device ID functions
 void DataManager::sanitize_device_id(char* device_id) {
@@ -224,7 +226,7 @@ void DataManager::get_device_id(void) {
 	}
 
 	strcpy(device_id, "serialno");
-	LOGERR("=> device id not found, using '%s'\n", device_id);
+	LOGINFO("=> device id not found, using '%s'\n", device_id);
 	mConstValues.insert(make_pair("device_id", device_id));
 	return;
 }
@@ -269,16 +271,18 @@ int DataManager::LoadValues(const string filename)
 		string Name;
 		string Value;
 		unsigned short length;
-		char array[512];
+		char array[513];
 
 		if (fread(&length, 1, sizeof(unsigned short), in) != sizeof(unsigned short))	goto error;
 		if (length >= 512)																goto error;
 		if (fread(array, 1, length, in) != length)										goto error;
+		array[length+1] = '\0';
 		Name = array;
 
 		if (fread(&length, 1, sizeof(unsigned short), in) != sizeof(unsigned short))	goto error;
 		if (length >= 512)																goto error;
 		if (fread(array, 1, length, in) != length)										goto error;
+		array[length+1] = '\0';
 		Value = array;
 
 		map<string, TStrIntPair>::iterator pos;
@@ -328,7 +332,7 @@ int DataManager::SaveValues()
 		return -1;
 
 	string mount_path = GetSettingsStoragePath();
-	PartitionManager.Mount_By_Path(mount_path.c_str(), false);
+	PartitionManager.Mount_By_Path(mount_path.c_str(), 1);
 
 	FILE* out = fopen(mBackingFile.c_str(), "wb");
 	if (!out)
@@ -515,13 +519,7 @@ int DataManager::SetValue(const string varName, int value, int persist /* = 0 */
 	if (varName == "tw_use_external_storage") {
 		string str;
 
-		if (GetIntValue(TW_HAS_DUAL_STORAGE) == 1) {
-			if (value == 0) {
-				str = GetStrValue(TW_INTERNAL_PATH);
-			} else {
-				str = GetStrValue(TW_EXTERNAL_PATH);
-			}
-		} else if (GetIntValue(TW_HAS_INTERNAL) == 1)
+		if (GetIntValue(TW_HAS_INTERNAL) == 1)
 			str = GetStrValue(TW_INTERNAL_PATH);
 		else
 			str = GetStrValue(TW_EXTERNAL_PATH);
@@ -609,8 +607,10 @@ void DataManager::SetBackupFolder()
 			}
 		}
 	} else {
-		if (PartitionManager.Fstab_Processed() != 0)
-			LOGERR("Storage partition '%s' not found\n", str.c_str());
+		if (PartitionManager.Fstab_Processed() != 0) {
+			LOGINFO("Storage partition '%s' not found\n", str.c_str());
+			gui_err("unable_locate_storage=Unable to locate storage device.");
+		}
 	}
 }
 
@@ -744,7 +744,7 @@ void DataManager::SetDefaultValues()
 		mConstValues.insert(make_pair(TW_HAS_USB_STORAGE, "0"));
 	} else {
 		LOGINFO("Lun file '%s'\n", Lun_File_str.c_str());
-		mConstValues.insert(make_pair(TW_HAS_USB_STORAGE, "1"));
+		mValues.insert(make_pair(TW_HAS_USB_STORAGE, make_pair("1", 0)));
 	}
 #endif
 #ifdef TW_INCLUDE_INJECTTWRP
@@ -790,8 +790,8 @@ void DataManager::SetDefaultValues()
 	mValues.insert(make_pair(TW_RM_RF_VAR, make_pair("0", 1)));
 	mValues.insert(make_pair(TW_SKIP_MD5_CHECK_VAR, make_pair("0", 1)));
 	mValues.insert(make_pair(TW_SKIP_MD5_GENERATE_VAR, make_pair("0", 1)));
-	mValues.insert(make_pair(TW_SDEXT_SIZE, make_pair("512", 1)));
-	mValues.insert(make_pair(TW_SWAP_SIZE, make_pair("32", 1)));
+	mValues.insert(make_pair(TW_SDEXT_SIZE, make_pair("0", 1)));
+	mValues.insert(make_pair(TW_SWAP_SIZE, make_pair("0", 1)));
 	mValues.insert(make_pair(TW_SDPART_FILE_SYSTEM, make_pair("ext3", 1)));
 	mValues.insert(make_pair(TW_TIME_ZONE_GUISEL, make_pair("CST6;CDT,M3.2.0,M11.1.0", 1)));
 	mValues.insert(make_pair(TW_TIME_ZONE_GUIOFFSET, make_pair("0", 1)));
@@ -825,16 +825,15 @@ void DataManager::SetDefaultValues()
 #endif
 	mValues.insert(make_pair("tw_gui_done", make_pair("0", 0)));
 	mValues.insert(make_pair("tw_encrypt_backup", make_pair("0", 0)));
-#ifdef TW_BRIGHTNESS_PATH
 	string findbright;
-	if (strcmp(EXPAND(TW_BRIGHTNESS_PATH), "/nobrightness") != 0) {
-		findbright = EXPAND(TW_BRIGHTNESS_PATH);
-		LOGINFO("TW_BRIGHTNESS_PATH := %s\n", findbright.c_str());
-		if (!TWFunc::Path_Exists(findbright)) {
-			LOGINFO("Specified brightness file '%s' not found.\n", findbright.c_str());
-			findbright = "";
-		}
+#ifdef TW_BRIGHTNESS_PATH
+	findbright = EXPAND(TW_BRIGHTNESS_PATH);
+	LOGINFO("TW_BRIGHTNESS_PATH := %s\n", findbright.c_str());
+	if (!TWFunc::Path_Exists(findbright)) {
+		LOGINFO("Specified brightness file '%s' not found.\n", findbright.c_str());
+		findbright = "";
 	}
+#endif
 	if (findbright.empty()) {
 		// Attempt to locate the brightness file
 		findbright = Find_File::Find("brightness", "/sys/class/backlight");
@@ -847,10 +846,33 @@ void DataManager::SetDefaultValues()
 		LOGINFO("Found brightness file at '%s'\n", findbright.c_str());
 		mConstValues.insert(make_pair("tw_has_brightnesss_file", "1"));
 		mConstValues.insert(make_pair("tw_brightness_file", findbright));
+		string maxBrightness;
+#ifdef TW_MAX_BRIGHTNESS
 		ostringstream maxVal;
 		maxVal << TW_MAX_BRIGHTNESS;
-		mConstValues.insert(make_pair("tw_brightness_max", maxVal.str()));
-		mValues.insert(make_pair("tw_brightness", make_pair(maxVal.str(), 1)));
+		maxBrightness = maxVal.str();
+#else
+		// Attempt to locate the max_brightness file
+		string maxbrightpath = findbright.insert(findbright.rfind('/') + 1, "max_");
+		if (TWFunc::Path_Exists(maxbrightpath)) {
+			ifstream maxVal(maxbrightpath.c_str());
+			if(maxVal >> maxBrightness) {
+				LOGINFO("Got max brightness %s from '%s'\n", maxBrightness.c_str(), maxbrightpath.c_str());
+			} else {
+				// Something went wrong, set that to indicate error
+				maxBrightness = "-1";
+			}
+		}
+		if (atoi(maxBrightness.c_str()) <= 0)
+		{
+			// Fallback into default
+			ostringstream maxVal;
+			maxVal << 255;
+			maxBrightness = maxVal.str();
+		}
+#endif
+		mConstValues.insert(make_pair("tw_brightness_max", maxBrightness));
+		mValues.insert(make_pair("tw_brightness", make_pair(maxBrightness, 1)));
 		mValues.insert(make_pair("tw_brightness_pct", make_pair("100", 1)));
 #ifdef TW_SECONDARY_BRIGHTNESS_PATH
 		string secondfindbright = EXPAND(TW_SECONDARY_BRIGHTNESS_PATH);
@@ -861,12 +883,26 @@ void DataManager::SetDefaultValues()
 			LOGINFO("Specified secondary brightness file '%s' not found.\n", secondfindbright.c_str());
 		}
 #endif
-		string max_bright = maxVal.str();
-		TWFunc::Set_Brightness(max_bright);
-	}
-#endif
-	mValues.insert(make_pair(TW_MILITARY_TIME, make_pair("0", 1)));
+#ifdef TW_DEFAULT_BRIGHTNESS
+		int defValInt = TW_DEFAULT_BRIGHTNESS;
+		int maxValInt = atoi(maxBrightness.c_str());
+		// Deliberately int so the % is always a whole number
+		int defPctInt = ( ( (double)defValInt / maxValInt ) * 100 );
+		ostringstream defPct;
+		defPct << defPctInt;
+		mValues.erase("tw_brightness_pct");
+		mValues.insert(make_pair("tw_brightness_pct", make_pair(defPct.str(), 1)));
 
+		ostringstream defVal;
+		defVal << TW_DEFAULT_BRIGHTNESS;
+		mValues.erase("tw_brightness");
+		mValues.insert(make_pair("tw_brightness", make_pair(defVal.str(), 1)));
+		TWFunc::Set_Brightness(defVal.str());
+#else
+		TWFunc::Set_Brightness(maxBrightness);
+#endif
+	}
+	mValues.insert(make_pair(TW_MILITARY_TIME, make_pair("0", 1)));
 #ifndef TW_EXCLUDE_ENCRYPTED_BACKUPS
 	mValues.insert(make_pair("tw_include_encrypted_backup", make_pair("1", 0)));
 #else
@@ -882,19 +918,12 @@ void DataManager::SetDefaultValues()
 	mConstValues.insert(make_pair("tw_has_mtp", "0"));
 	mConstValues.insert(make_pair("tw_mtp_enabled", "0"));
 #endif
-	mValues.insert(make_pair("tw_mount_system_ro", make_pair("1", 1)));
+	mValues.insert(make_pair("tw_mount_system_ro", make_pair("2", 1)));
 	mValues.insert(make_pair("tw_never_show_system_ro_page", make_pair("0", 1)));
+	mValues.insert(make_pair("tw_language", make_pair(EXPAND(TW_DEFAULT_LANGUAGE), 1)));
+	LOGINFO("LANG: %s\n", EXPAND(TW_DEFAULT_LANGUAGE));
 
-#if defined(TW_HAS_LANDSCAPE) && defined(TW_DEFAULT_ROTATION)
-	mValues.insert(make_pair(TW_ROTATION, make_pair(EXPAND(TW_DEFAULT_ROTATION), 1)));
-#else
-	mValues.insert(make_pair(TW_ROTATION, make_pair("0", 1)));
-#endif
-	mValues.insert(make_pair(TW_ENABLE_ROTATION, make_pair("0", 0)));
-
-	mConstValues.insert(make_pair("tw_device_name", TARGET_DEVICE));
-
-	mValues.insert(make_pair(TW_AUTO_INJECT_MROM, make_pair("1", 1)));
+	mValues.insert(make_pair("tw_has_adopted_storage", make_pair("0", 0)));
 
 	pthread_mutex_unlock(&m_valuesLock);
 }
@@ -1017,6 +1046,7 @@ int DataManager::GetMagicValue(const string varName, string& value)
 
 void DataManager::Output_Version(void)
 {
+#ifndef TW_OEM_BUILD
 	string Path;
 	char version[255];
 
@@ -1037,7 +1067,7 @@ void DataManager::Output_Version(void)
 	}
 	FILE *fp = fopen(Path.c_str(), "w");
 	if (fp == NULL) {
-		LOGERR("Unable to open '%s'.\n", Path.c_str());
+		gui_msg(Msg(msg::kError, "error_opening_strerr=Error opening: '{1}' ({2})")(Path)(strerror(errno)));
 		return;
 	}
 	strcpy(version, TW_VERSION_STR);
@@ -1047,6 +1077,7 @@ void DataManager::Output_Version(void)
 	PartitionManager.Output_Storage_Fstab();
 	sync();
 	LOGINFO("Version number saved to '%s'\n", Path.c_str());
+#endif
 }
 
 void DataManager::ReadSettingsFile(void)
@@ -1072,7 +1103,7 @@ void DataManager::ReadSettingsFile(void)
 	{
 		usleep(500000);
 		if (!PartitionManager.Mount_Settings_Storage(false))
-			LOGERR("Unable to mount %s when trying to read settings file.\n", settings_file);
+			gui_msg(Msg(msg::kError, "unable_to_mount=Unable to mount {1}")(settings_file));
 	}
 
 	mkdir(mkdir_path, 0777);
@@ -1084,9 +1115,7 @@ void DataManager::ReadSettingsFile(void)
 	PartitionManager.Mount_All_Storage();
 	update_tz_environment_variables();
 #ifdef TW_MAX_BRIGHTNESS
-	if (GetStrValue("tw_brightness_path") != "/nobrightness") {
-		TWFunc::Set_Brightness(GetStrValue("tw_brightness"));
-	}
+	TWFunc::Set_Brightness(GetStrValue("tw_brightness"));
 #endif
 }
 

@@ -24,6 +24,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <string.h>
 
 
 #include "../common.h"
@@ -380,12 +382,12 @@ static int vk_tp_to_screen(struct position *p, int *x, int *y)
 #endif
 
 #ifndef RECOVERY_TOUCHSCREEN_SWAP_XY
-    int fb_width = gr_screen_width();
-    int fb_height = gr_screen_height();
+    int fb_width = gr_fb_width();
+    int fb_height = gr_fb_height();
 #else
     // We need to swap the scaling sizes, too
-    int fb_width = gr_screen_height();
-    int fb_height = gr_screen_width();
+    int fb_width = gr_fb_height();
+    int fb_height = gr_fb_width();
 #endif
 
     *x = (p->x - p->xi.minimum) * (fb_width - 1) / (p->xi.maximum - p->xi.minimum);
@@ -545,6 +547,12 @@ static int vk_modify(struct ev *e, struct input_event *ev)
             break;
 
         case ABS_MT_TRACKING_ID: //39
+#ifdef TW_IGNORE_ABS_MT_TRACKING_ID
+#ifdef _EVENT_LOGGING
+            printf("EV: %s => EV_ABS ABS_MT_TRACKING_ID %d ignored\n", e->deviceName, ev->value);
+#endif
+            return 1;
+#endif
             if (ev->value < 0) {
                 e->mt_p.x = 0;
                 e->mt_p.y = 0;
@@ -581,6 +589,10 @@ static int vk_modify(struct ev *e, struct input_event *ev)
             printf("EV: %s => EV_ABS ABS_MT_DISTANCE %d\n", e->deviceName, ev->value);
 			return 1;
             break;
+        case ABS_MT_SLOT:
+            printf("EV: %s => ABS_MT_SLOT %d\n", e->deviceName, ev->value);
+			return 1;
+			break;
 #endif
 
         default:
@@ -663,54 +675,6 @@ static int vk_modify(struct ev *e, struct input_event *ev)
 #endif
 #ifdef RECOVERY_TOUCHSCREEN_FLIP_Y
     y = gr_fb_height() - y;
-#endif
-
-#ifdef TW_HAS_LANDSCAPE
-    switch(gr_get_rotation())
-    {
-        case 0:
-        default:
-            break;
-        case 90:
-#ifdef RECOVERY_TOUCHSCREEN_FLIP_X
-            x = gr_fb_width() - x;
-#endif
-#ifdef RECOVERY_TOUCHSCREEN_FLIP_Y
-            y = gr_fb_height() - y;
-#endif
-
-            x ^= y;
-            y ^= x;
-            x ^= y;
-
-#ifndef RECOVERY_TOUCHSCREEN_FLIP_X
-            y = gr_fb_height() - y;
-#endif
-            break;
-        case 180:
-            y = gr_fb_height() - y;
-            x = gr_fb_width() - x;
-            break;
-        case 270:
-#ifdef RECOVERY_TOUCHSCREEN_FLIP_X
-            x = gr_fb_width() - x;
-#endif
-#ifdef RECOVERY_TOUCHSCREEN_FLIP_Y
-            y = gr_fb_height() - y;
-#endif
-
-            x ^= y;
-            y ^= x;
-            x ^= y;
-
-#ifdef RECOVERY_TOUCHSCREEN_FLIP_X
-            y = gr_fb_height() - y;
-#endif
-#ifndef RECOVERY_TOUCHSCREEN_FLIP_Y
-            x = gr_fb_width() - x;
-#endif
-            break;
-    }
 #endif
 
 #ifdef _EVENT_LOGGING

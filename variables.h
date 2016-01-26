@@ -17,7 +17,7 @@
 #ifndef _VARIABLES_HEADER_
 #define _VARIABLES_HEADER_
 
-#define TW_VERSION_STR              "2.8.7"
+#define TW_VERSION_STR              "2.8.7.0"
 
 #define TW_USE_COMPRESSION_VAR      "tw_use_compression"
 #define TW_FILENAME                 "tw_filename"
@@ -74,7 +74,6 @@
 #define TW_SHOW_SPAM_VAR            "tw_show_spam"
 #define TW_COLOR_THEME_VAR          "tw_color_theme"
 #define TW_VERSION_VAR              "tw_version"
-#define TW_MROM_REC_VERSION_VAR     "tw_mrom_rec_version"
 #define TW_SORT_FILES_BY_DATE_VAR   "tw_sort_files_by_date"
 #define TW_GUI_SORT_ORDER           "tw_gui_sort_order"
 #define TW_ZIP_LOCATION_VAR         "tw_zip_location"
@@ -112,7 +111,6 @@
 #define TW_REBOOT_POWEROFF          "tw_reboot_poweroff"
 #define TW_REBOOT_BOOTLOADER        "tw_reboot_bootloader"
 
-#define TW_HAS_DUAL_STORAGE         "tw_has_dual_storage"
 #define TW_USE_EXTERNAL_STORAGE     "tw_use_external_storage"
 #define TW_HAS_INTERNAL             "tw_has_internal"
 #define TW_INTERNAL_PATH            "tw_internal_path"         // /data/media or /internal
@@ -153,10 +151,6 @@
 #define TW_DATA_BLK_DEVICE          "tw_data_blk_device"  // Original block device - not decrypted
 #define TW_SDEXT_DISABLE_EXT4       "tw_sdext_disable_ext4"
 #define TW_MILITARY_TIME            "tw_military_time"
-#define TW_ROTATION                 "tw_rotation"
-#define TW_ENABLE_ROTATION          "tw_enable_rotation"
-#define TW_AUTO_INJECT_MROM         "tw_auto_inject_mrom"
-#define TW_ORS_IS_SECONDARY_ROM     "tw_ors_is_secondary_rom"
 
 // Also used:
 //   tw_boot_is_mountable
@@ -175,18 +169,12 @@
 //#define MAX_ARCHIVE_SIZE 52428800LLU // 50MB split for testing
 
 #ifndef CUSTOM_LUN_FILE
-#define CUSTOM_LUN_FILE "/sys/devices/platform/usb_mass_storage/lun%d/file"
-#endif
-
-#ifndef TW_BRIGHTNESS_PATH
-#define TW_BRIGHTNESS_PATH /nobrightness
+#define CUSTOM_LUN_FILE "/sys/class/android_usb/android0/f_mass_storage/lun%d/file"
 #endif
 
 // For OpenRecoveryScript
 #define SCRIPT_FILE_CACHE "/cache/recovery/openrecoveryscript"
 #define SCRIPT_FILE_TMP "/tmp/openrecoveryscript"
 #define TMP_LOG_FILE "/tmp/recovery.log"
-
-#define UBUNTU_COMMAND_FILE "/cache/recovery/ubuntu_command"
 
 #endif  // _VARIABLES_HEADER_

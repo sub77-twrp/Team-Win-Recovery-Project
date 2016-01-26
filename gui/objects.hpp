@@ -34,6 +34,7 @@ using namespace rapidxml;
 #include "resources.hpp"
 #include "pages.hpp"
 #include "../partitions.hpp"
+#include "placement.h"
 
 #ifndef TW_X_OFFSET
 #define TW_X_OFFSET 0
@@ -42,18 +43,17 @@ using namespace rapidxml;
 #define TW_Y_OFFSET 0
 #endif
 
+struct translate_later_struct {
+	std::string resource_name; // Name of the string resource for looking up
+	std::string default_value; // Default in case we don't find the string resource
+	std::string color;         // Color for the console... normal, highlight, warning, error
+	std::string format;        // Formatted extra variables like %i, %s
+	std::string text;          // Final, translated, formatted text
+	bool inline_format;        // Indicates if the final text includes an inlined format variable
+};
+
 class RenderObject
 {
-public:
-	enum Placement {
-		TOP_LEFT = 0,
-		TOP_RIGHT = 1,
-		BOTTOM_LEFT = 2,
-		BOTTOM_RIGHT = 3,
-		CENTER = 4,
-		CENTER_X_ONLY = 5,
-	};
-
 public:
 	RenderObject() { mRenderX = 0; mRenderY = 0; mRenderW = 0; mRenderH = 0; mPlacement = TOP_LEFT; }
 	virtual ~RenderObject() {}
@@ -81,7 +81,8 @@ public:
 	virtual int SetPlacement(Placement placement) { mPlacement = placement; return 0; }
 
 	// SetPageFocus - Notify when a page gains or loses focus
-	virtual void SetPageFocus(int inFocus) { return; }
+	// TODO: This should be named NotifyPageFocus for consistency
+	virtual void SetPageFocus(int inFocus __unused) { return; }
 
 protected:
 	int mRenderX, mRenderY, mRenderW, mRenderH;
@@ -97,16 +98,14 @@ public:
 public:
 	// NotifyTouch - Notify of a touch event
 	//  Return 0 on success, >0 to ignore remainder of touch, and <0 on error
-	virtual int NotifyTouch(TOUCH_STATE state, int x, int y) { return 0; }
+	virtual int NotifyTouch(TOUCH_STATE state __unused, int x __unused, int y __unused) { return 0; }
 
 	// NotifyKey - Notify of a key press
 	//  Return 0 on success (and consume key), >0 to pass key to next handler, and <0 on error
-	virtual int NotifyKey(int key, bool down) { return 1; }
+	virtual int NotifyKey(int key __unused, bool down __unused) { return 1; }
 
-	// GetRenderPos - Returns the current position of the object
 	virtual int GetActionPos(int& x, int& y, int& w, int& h) { x = mActionX; y = mActionY; w = mActionW; h = mActionH; return 0; }
 
-	// SetRenderPos - Update the position of the object
 	//  Return 0 on success, <0 on error
 	virtual int SetActionPos(int x, int y, int w = 0, int h = 0);
 
@@ -151,8 +150,10 @@ protected:
 	std::vector<Condition> mConditions;
 
 protected:
-	bool isMounted(std::string vol);
-	bool isConditionTrue(Condition* condition);
+	static void LoadConditions(xml_node<>* node, std::vector<Condition>& conditions);
+	static bool isMounted(std::string vol);
+	static bool isConditionTrue(Condition* condition);
+	static bool UpdateConditions(std::vector<Condition>& conditions, const std::string& varName);
 
 	bool mConditionsResult;
 };
@@ -164,9 +165,9 @@ public:
 	virtual ~InputObject() {}
 
 public:
-	// NotifyKeyboard - Notify of keyboard input
+	// NotifyCharInput - Notify of character input (usually from the onscreen or hardware keyboard)
 	//  Return 0 on success (and consume key), >0 to pass key to next handler, and <0 on error
-	virtual int NotifyKeyboard(int key) { return 1; }
+	virtual int NotifyCharInput(int ch __unused) { return 1; }
 
 	virtual int SetInputFocus(int focus) { HasInputFocus = focus; return 1; }
 
@@ -205,6 +206,8 @@ public:
 
 public:
 	bool isHighlighted;
+	bool scaleWidth;
+	unsigned maxWidth;
 
 protected:
 	std::string mText;
@@ -215,7 +218,6 @@ protected:
 	int mIsStatic;
 	int mVarChanged;
 	int mFontHeight;
-	unsigned maxWidth;
 	unsigned charSkip;
 };
 
@@ -328,24 +330,6 @@ protected:
 	int getpartitiondetails(std::string arg);
 	int screenshot(std::string arg);
 	int setbrightness(std::string arg);
-	int rotation(std::string arg);
-	int timeout(std::string arg);
-	int multirom(std::string arg);
-	int multirom_reset_roms_paths(std::string arg);
-	int multirom_rename(std::string arg);
-	int multirom_manage(std::string arg);
-	int multirom_settings(std::string arg);
-	int multirom_settings_save(std::string arg);
-	int multirom_add(std::string arg);
-	int multirom_add_second(std::string arg);
-	int multirom_add_file_selected(std::string arg);
-	int multirom_change_img_size(std::string arg);
-	int multirom_change_img_size_act(std::string arg);
-	int multirom_set_list_loc(std::string arg);
-	int multirom_list_loc_selected(std::string arg);
-	int multirom_exit_backup(std::string arg);
-	int multirom_create_internal_rom_name(std::string arg);
-	int multirom_list_roms_for_swap(std::string arg);
 
 	// (originally) threaded actions
 	int fileexists(std::string arg);
@@ -380,26 +364,8 @@ protected:
 	int cancelbackup(std::string arg);
 	int checkpartitionlifetimewrites(std::string arg);
 	int mountsystemtoggle(std::string arg);
-
-	int multirom_delete(std::string arg);
-	int multirom_flash_zip(std::string arg);
-	int multirom_flash_zip_sailfish(std::string arg);
-	int multirom_inject(std::string arg);
-	int multirom_inject_curr_boot(std::string arg);
-	int multirom_add_rom(std::string arg);
-	int multirom_ubuntu_patch_init(std::string arg);
-	int multirom_touch_patch_init(std::string arg);
-	int multirom_wipe(std::string arg);
-	int multirom_disable_flash_kernel(std::string arg);
-	int multirom_rm_bootimg(std::string arg);
-	int multirom_backup_rom(std::string arg);
-	int multirom_sideload(std::string arg);
-	int multirom_swap_calc_space(std::string arg);
-	int multirom_execute_swap(std::string arg);
-	int multirom_set_fw(std::string arg);
-	int multirom_remove_fw(std::string arg);
-	int multirom_restorecon(std::string arg);
-	int system_image_upgrader(std::string arg);
+	int setlanguage(std::string arg);
+	int twcmd(std::string arg);
 
 	int simulate;
 };
@@ -513,7 +479,7 @@ protected:
 	// render a single item in rect (mRenderX, yPos, mRenderW, actualItemHeight)
 	virtual void RenderItem(size_t itemindex, int yPos, bool selected);
 	// an item was selected
-	virtual void NotifySelect(size_t item_selected) {}
+	virtual void NotifySelect(size_t item_selected __unused) {}
 
 	// render a standard-layout list item with optional icon and text
 	void RenderStdItem(int yPos, bool selected, ImageResource* icon, const char* text, int iconAndTextH = 0);
@@ -589,6 +555,7 @@ protected:
 	int lastY, last2Y; // last 2 touch locations, used for tracking kinetic scroll speed
 	int fastScroll; // indicates that the inital touch was inside the fastscroll region - makes for easier fast scrolling as the touches don't have to stay within the fast scroll region and you drag your finger
 	int mUpdate; // indicates that a change took place and we need to re-render
+	bool AddLines(std::vector<std::string>* origText, std::vector<std::string>* origColor, size_t* lastCount, std::vector<std::string>* rText, std::vector<std::string>* rColor);
 };
 
 class GUIFileSelector : public GUIScrollList
@@ -633,8 +600,8 @@ protected:
 	std::vector<FileData> mFolderList;
 	std::vector<FileData> mFileList;
 	std::string mPathVar; // current path displayed, saved in the data manager
-	std::vector<std::string> mExtn; // used for filtering the file list, for example, *.zip
 	std::string mPathDefault; // default value for the path if none is set in mPathVar
+	std::string mExtn; // used for filtering the file list, for example, *.zip
 	std::string mVariable; // set when the user selects an item, pull path like /path/to/foo
 	std::string mSortVariable; // data manager variable used to change the sorting of files
 	std::string mSelection; // set when the user selects an item without the full path like selecting /path/to/foo would just be set to foo
@@ -644,7 +611,6 @@ protected:
 	ImageResource* mFolderIcon;
 	ImageResource* mFileIcon;
 	bool updateFileList;
-	std::vector<std::string> mExcludeFiles;
 };
 
 class GUIListBox : public GUIScrollList
@@ -669,19 +635,24 @@ public:
 	virtual void NotifySelect(size_t item_selected);
 
 protected:
-	struct ListData {
+	struct ListItem {
 		std::string displayName;
+		std::string variableName;
 		std::string variableValue;
 		unsigned int selected;
+		GUIAction* action;
+		std::vector<Condition> mConditions;
 	};
 
 protected:
-	std::vector<ListData> mList;
+	std::vector<ListItem> mListItems;
+	std::vector<size_t> mVisibleItems; // contains indexes in mListItems of visible items only
 	std::string mVariable;
 	std::string currentValue;
-	std::string mItemsVar;
 	ImageResource* mIconSelected;
 	ImageResource* mIconUnselected;
+	bool isCheckList;
+	bool isTextParsed;
 };
 
 class GUIPartitionList : public GUIScrollList
@@ -721,6 +692,33 @@ protected:
 	bool updateList;
 };
 
+class GUITextBox : public GUIScrollList
+{
+public:
+	GUITextBox(xml_node<>* node);
+
+public:
+	// Update - Update any UI component animations (called <= 30 FPS)
+	//  Return 0 if nothing to update, 1 on success and contiue, >1 if full render required, and <0 on error
+	virtual int Update(void);
+
+	// NotifyVarChange - Notify of a variable change
+	virtual int NotifyVarChange(const std::string& varName, const std::string& value);
+
+	// ScrollList interface
+	virtual size_t GetItemCount();
+	virtual void RenderItem(size_t itemindex, int yPos, bool selected);
+	virtual void NotifySelect(size_t item_selected);
+protected:
+
+	size_t mLastCount;
+	bool mIsStatic;
+	std::vector<std::string> mLastValue; // Parsed text - parsed for variables but not word wrapped
+	std::vector<std::string> mText;      // Original text - not parsed for variables and not word wrapped
+	std::vector<std::string> rText;      // Rendered text - what we actually see
+
+};
+
 class GUIConsole : public GUIScrollList
 {
 public:
@@ -747,6 +745,7 @@ public:
 	virtual size_t GetItemCount();
 	virtual void RenderItem(size_t itemindex, int yPos, bool selected);
 	virtual void NotifySelect(size_t item_selected);
+	static void Translate_Now();
 protected:
 	enum SlideoutState
 	{
@@ -766,9 +765,45 @@ protected:
 	std::vector<std::string> rConsoleColor;
 
 protected:
-	bool AddLines();
 	int RenderSlideout(void);
 	int RenderConsole(void);
+};
+
+class TerminalEngine;
+class GUITerminal : public GUIScrollList, public InputObject
+{
+public:
+	GUITerminal(xml_node<>* node);
+
+public:
+	// Update - Update any UI component animations (called <= 30 FPS)
+	//  Return 0 if nothing to update, 1 on success and contiue, >1 if full render required, and <0 on error
+	virtual int Update(void);
+
+	// NotifyTouch - Notify of a touch event
+	//  Return 0 on success, >0 to ignore remainder of touch, and <0 on error (Return error to allow other handlers)
+	virtual int NotifyTouch(TOUCH_STATE state, int x, int y);
+
+	// NotifyKey - Notify of a key press
+	//  Return 0 on success (and consume key), >0 to pass key to next handler, and <0 on error
+	virtual int NotifyKey(int key, bool down);
+
+	// character input
+	virtual int NotifyCharInput(int ch);
+
+	// SetPageFocus - Notify when a page gains or loses focus
+	virtual void SetPageFocus(int inFocus);
+
+	// ScrollList interface
+	virtual size_t GetItemCount();
+	virtual void RenderItem(size_t itemindex, int yPos, bool selected);
+	virtual void NotifySelect(size_t item_selected);
+protected:
+	void InitAndResize();
+
+	TerminalEngine* engine; // non-visual parts of the terminal (text buffer etc.), not owned
+	int updateCounter; // to track if anything changed in the back-end
+	bool lastCondition; // to track if the condition became true and we might need to resize the terminal engine
 };
 
 // GUIAnimation - Used for animations
@@ -828,7 +863,6 @@ protected:
 	virtual int RenderInternal(void);	   // Does the actual render
 };
 
-
 class GUISlider : public GUIObject, public RenderObject, public ActionObject
 {
 public:
@@ -859,18 +893,13 @@ protected:
 	int sUpdate;
 };
 
-#define KEYBOARD_ACTION 253
-#define KEYBOARD_LAYOUT 254
-#define KEYBOARD_SWIPE_LEFT 252
-#define KEYBOARD_SWIPE_RIGHT 251
-#define KEYBOARD_ARROW_LEFT 250
-#define KEYBOARD_ARROW_RIGHT 249
-#define KEYBOARD_HOME 248
-#define KEYBOARD_END 247
-#define KEYBOARD_ARROW_UP 246
-#define KEYBOARD_ARROW_DOWN 245
-#define KEYBOARD_SPECIAL_KEYS 245
-#define KEYBOARD_BACKSPACE 8
+// these are ASCII codes reported via NotifyCharInput
+// other special keys (arrows etc.) are reported via NotifyKey
+#define KEYBOARD_ACTION 13	// CR
+#define KEYBOARD_BACKSPACE 8	// Backspace
+#define KEYBOARD_TAB 9		// Tab
+#define KEYBOARD_SWIPE_LEFT 21	// Ctrl+U to delete line, same as in readline (used by shell etc.)
+#define KEYBOARD_SWIPE_RIGHT 11	// Ctrl+K, same as in readline
 
 class GUIKeyboard : public GUIObject, public RenderObject, public ActionObject
 {
@@ -883,17 +912,20 @@ public:
 	virtual int Update(void);
 	virtual int NotifyTouch(TOUCH_STATE state, int x, int y);
 	virtual int SetRenderPos(int x, int y, int w = 0, int h = 0);
+	virtual void SetPageFocus(int inFocus);
 
 protected:
 	struct Key
 	{
-		unsigned char key; // ASCII code or one of the special KEYBOARD_* codes above
-		unsigned char longpresskey;
+		int key; // positive: ASCII/Unicode code; negative: Linux key code (KEY_*)
+		int longpresskey;
 		int end_x;
 		int layout;
 	};
 	int ParseKey(const char* keyinfo, Key& key, int& Xindex, int keyWidth, bool longpress);
 	void LoadKeyLabels(xml_node<>* parent, int layout);
+	void DrawKey(Key& key, int keyX, int keyY, int keyW, int keyH);
+	int KeyCharToCtrlChar(int key);
 
 	enum {
 		MAX_KEYBOARD_LAYOUTS = 5,
@@ -903,7 +935,7 @@ protected:
 	struct Layout
 	{
 		ImageResource* keyboardImg;
-		struct Key keys[MAX_KEYBOARD_ROWS][MAX_KEYBOARD_KEYS];
+		Key keys[MAX_KEYBOARD_ROWS][MAX_KEYBOARD_KEYS];
 		int row_end_y[MAX_KEYBOARD_ROWS];
 		bool is_caps;
 		int revert_layout;
@@ -912,7 +944,7 @@ protected:
 
 	struct KeyLabel
 	{
-		unsigned char key; // same as in struct Key
+		int key; // same as in struct Key
 		int layout_from; // 1-based; 0 for labels that apply to all layouts
 		int layout_to; // same as Key.layout
 		string text; // key label text
@@ -927,15 +959,19 @@ protected:
 	std::string mVariable;
 	int currentLayout;
 	bool CapsLockOn;
-	int rowY, colX, highlightRenderCount;
-	bool hasHighlight, hasCapsHighlight;
+	static bool CtrlActive; // all keyboards share a common Control key state so that the Control key can be on a separate keyboard instance
+	int highlightRenderCount;
+	Key* currentKey;
+	bool hasHighlight, hasCapsHighlight, hasCtrlHighlight;
 	COLOR mHighlightColor;
 	COLOR mCapsHighlightColor;
+	COLOR mCtrlHighlightColor;
 	COLOR mFontColor; // for centered key labels
 	COLOR mFontColorSmall; // for centered key labels
 	FontResource* mFont; // for main key labels
 	FontResource* mSmallFont; // for key labels like "?123"
 	FontResource* mLongpressFont; // for the small longpress label in the upper right corner
+	int longpressOffsetX, longpressOffsetY; // distance of the longpress label from the key corner
 	COLOR mLongpressFontColor;
 	COLOR mBackgroundColor; // keyboard background color
 	COLOR mKeyColorAlphanumeric; // key background color
@@ -966,7 +1002,8 @@ public:
 	//  Return 0 on success, >0 to ignore remainder of touch, and <0 on error
 	virtual int NotifyTouch(TOUCH_STATE state, int x, int y);
 
-	virtual int NotifyKeyboard(int key);
+	virtual int NotifyKey(int key, bool down);
+	virtual int NotifyCharInput(int ch);
 
 protected:
 	virtual int GetSelection(int x, int y);
@@ -1024,7 +1061,9 @@ public:
 	// called by multi-key actions to suppress key-release notifications
 	void ConsumeKeyRelease(int key);
 
+	bool IsKeyDown(int key_code);
 private:
+	int mLastKey;
 	int mLastKeyChar;
 	std::set<int> mPressedKeys;
 };
@@ -1113,7 +1152,6 @@ public:
 	void GetPos(int& x, int& y);
 	void LoadData(xml_node<>* node);
 	void ResetData(int resX, int resY);
-	void SetResolution(int resX, int resY);
 
 private:
 	int m_resX;
@@ -1135,6 +1173,7 @@ public:
 	virtual int Render(void);
 	virtual int Update(void);
 	virtual int NotifyTouch(TOUCH_STATE state, int x, int y);
+	virtual int NotifyVarChange(const std::string& varName, const std::string& value);
 	virtual int SetRenderPos(int x, int y, int w = 0, int h = 0);
 
 protected:
@@ -1142,9 +1181,10 @@ protected:
 	void ResetActiveDots();
 	void ConnectDot(int dot_idx);
 	void ConnectIntermediateDots(int dot_idx);
+	void Resize(size_t size);
 	int InDot(int x, int y);
 	bool DotUsed(int dot_idx);
-	static bool IsInRect(int x, int y, int rx, int ry, int rw, int rh);
+	std::string GeneratePassphrase();
 	void PatternDrawn();
 
 	struct Dot {
@@ -1153,8 +1193,11 @@ protected:
 		bool active;
 	};
 
-	Dot mDots[9];
-	int mConnectedDots[9];
+	std::string mSizeVar;
+	size_t mGridSize;
+
+	Dot* mDots;
+	int* mConnectedDots;
 	size_t mConnectedDotsLen;
 	int mCurLineX;
 	int mCurLineY;
@@ -1189,7 +1232,7 @@ FontResource* LoadAttrFont(xml_node<>* element, const char* attrname);
 ImageResource* LoadAttrImage(xml_node<>* element, const char* attrname);
 AnimationResource* LoadAttrAnimation(xml_node<>* element, const char* attrname);
 
-bool LoadPlacement(xml_node<>* node, int* x, int* y, int* w = NULL, int* h = NULL, RenderObject::Placement* placement = NULL);
+bool LoadPlacement(xml_node<>* node, int* x, int* y, int* w = NULL, int* h = NULL, Placement* placement = NULL);
 
 #endif  // _OBJECTS_HEADER
 

@@ -39,24 +39,16 @@
 #include "../partitions.hpp"
 #include "../twrp-functions.hpp"
 #include "../openrecoveryscript.hpp"
-#include "../twrpDU.hpp"
-
-#include <ctype.h>
 
 #include "../adb_install.h"
 #include "../fuse_sideload.h"
 #include "blanktimer.hpp"
-
-#include "../multirom.h"
-#include "../mrominstaller.h"
-
 extern "C" {
 #include "../twcommon.h"
 #include "../minuitwrp/minui.h"
 #include "../variables.h"
 #include "../twinstall.h"
 #include "cutils/properties.h"
-#include "../minadbd/adb.h"
 #include "../adb_install.h"
 #include "../set_metadata.h"
 };
@@ -164,7 +156,6 @@ GUIAction::GUIAction(xml_node<>* node)
 
 	if (!node)  return;
 
-#define ADD_ACTION(n) mf[#n] = &GUIAction::n
 	if (mf.empty()) {
 #define ADD_ACTION(n) mf[#n] = &GUIAction::n
 #define ADD_ACTION_EX(name, func) mf[name] = &GUIAction::func
@@ -206,25 +197,7 @@ GUIAction::GUIAction(xml_node<>* node)
 		ADD_ACTION(cancelbackup);
 		ADD_ACTION(checkpartitionlifetimewrites);
 		ADD_ACTION(mountsystemtoggle);
-
-		ADD_ACTION(rotation);
-		ADD_ACTION(multirom);
-		ADD_ACTION(multirom_reset_roms_paths);
-		ADD_ACTION(multirom_rename);
-		ADD_ACTION(multirom_manage);
-		ADD_ACTION(multirom_settings);
-		ADD_ACTION(multirom_settings_save);
-		ADD_ACTION(multirom_add);
-		ADD_ACTION(multirom_add_second);
-		ADD_ACTION(multirom_add_file_selected);
-		ADD_ACTION(multirom_change_img_size);
-		ADD_ACTION(multirom_change_img_size_act);
-		ADD_ACTION(multirom_set_list_loc);
-		ADD_ACTION(multirom_list_loc_selected);
-		ADD_ACTION(multirom_exit_backup);
-		ADD_ACTION(multirom_create_internal_rom_name);
-		ADD_ACTION(multirom_list_roms_for_swap);
-		ADD_ACTION(multirom_swap_calc_space);
+		ADD_ACTION(setlanguage);
 
 		// remember actions that run in the caller thread
 		for (mapFunc::const_iterator it = mf.begin(); it != mf.end(); ++it)
@@ -253,25 +226,7 @@ GUIAction::GUIAction(xml_node<>* node)
 		ADD_ACTION(resize);
 		ADD_ACTION(changefilesystem);
 		ADD_ACTION(flashimage);
-
-		ADD_ACTION(multirom_delete);
-		ADD_ACTION(multirom_flash_zip);
-		ADD_ACTION(multirom_flash_zip_sailfish);
-		ADD_ACTION(multirom_inject);
-		ADD_ACTION(multirom_inject_curr_boot);
-		ADD_ACTION(multirom_add_rom);
-		ADD_ACTION(multirom_ubuntu_patch_init);
-		ADD_ACTION(multirom_touch_patch_init);
-		ADD_ACTION(multirom_wipe);
-		ADD_ACTION(multirom_disable_flash_kernel);
-		ADD_ACTION(multirom_rm_bootimg);
-		ADD_ACTION(multirom_backup_rom);
-		ADD_ACTION(multirom_sideload);
-		ADD_ACTION(multirom_execute_swap);
-		ADD_ACTION(multirom_set_fw);
-		ADD_ACTION(multirom_remove_fw);
-		ADD_ACTION(multirom_restorecon);
-		ADD_ACTION(system_image_upgrader);
+		ADD_ACTION(twcmd);
 	}
 
 	// First, get the action
@@ -327,7 +282,7 @@ GUIAction::GUIAction(xml_node<>* node)
 	}
 }
 
-int GUIAction::NotifyTouch(TOUCH_STATE state, int x, int y)
+int GUIAction::NotifyTouch(TOUCH_STATE state __unused, int x __unused, int y __unused)
 {
 	if (state == TOUCH_RELEASE)
 		doActions();
@@ -337,12 +292,9 @@ int GUIAction::NotifyTouch(TOUCH_STATE state, int x, int y)
 
 int GUIAction::NotifyKey(int key, bool down)
 {
-	if (mKeys.empty())
-		return 0;
-
 	std::map<int, bool>::iterator itr = mKeys.find(key);
 	if(itr == mKeys.end())
-		return 0;
+		return 1;
 
 	bool prevState = itr->second;
 	itr->second = down;
@@ -352,12 +304,14 @@ int GUIAction::NotifyKey(int key, bool down)
 	// Else, check if all buttons are pressed, then consume their release events
 	// so they don't trigger one-button actions and reset mKeys pressed status
 	if(mKeys.size() == 1) {
-		if(!down && prevState)
+		if(!down && prevState) {
 			doActions();
+			return 0;
+		}
 	} else if(down) {
 		for(itr = mKeys.begin(); itr != mKeys.end(); ++itr) {
 			if(!itr->second)
-				return 0;
+				return 1;
 		}
 
 		// Passed, all req buttons are pressed, reset them and consume release events
@@ -368,9 +322,10 @@ int GUIAction::NotifyKey(int key, bool down)
 		}
 
 		doActions();
+		return 0;
 	}
 
-	return 0;
+	return 1;
 }
 
 int GUIAction::NotifyVarChange(const std::string& varName, const std::string& value)
@@ -387,12 +342,12 @@ int GUIAction::NotifyVarChange(const std::string& varName, const std::string& va
 
 void GUIAction::simulate_progress_bar(void)
 {
-	gui_print("Simulating actions...\n");
+	gui_msg("simulating=Simulating actions...");
 	for (int i = 0; i < 5; i++)
 	{
 		if (PartitionManager.stop_backup.get_value()) {
 			DataManager::SetValue("tw_cancel_backup", 1);
-			gui_print("Backup Canceled.\n");
+			gui_msg("backup_cancel=Backup Cancelled");
 			DataManager::SetValue("ui_progress", 0);
 			PartitionManager.stop_backup.set_value(0);
 			return;
@@ -414,8 +369,15 @@ int GUIAction::flash_zip(std::string filename, int* wipe_cache)
 		return -1;
 	}
 
-	if (!PartitionManager.Mount_By_Path(filename, true))
-		return -1;
+	if (!TWFunc::Path_Exists(filename)) {
+		if (!PartitionManager.Mount_By_Path(filename, true)) {
+			return -1;
+		}
+		if (!TWFunc::Path_Exists(filename)) {
+			gui_msg(Msg(msg::kError, "unable_to_locate=Unable to locate {1}.")(filename));
+			return -1;
+		}
+	}
 
 	if (simulate) {
 		simulate_progress_bar();
@@ -428,10 +390,10 @@ int GUIAction::flash_zip(std::string filename, int* wipe_cache)
 		{
 			DataManager::SetValue("tw_operation", "Configuring TWRP");
 			DataManager::SetValue("tw_partition", "");
-			gui_print("Configuring TWRP...\n");
+			gui_msg("config_twrp=Configuring TWRP...");
 			if (TWFunc::Exec_Cmd("/sbin/installTwrp reinstall") < 0)
 			{
-				gui_print("Unable to configure TWRP with this kernel.\n");
+				gui_msg("config_twrp_err=Unable to configure TWRP with this kernel.");
 			}
 		}
 	}
@@ -548,6 +510,7 @@ void GUIAction::operation_end(const int operation_status)
 	DataManager::SetValue("tw_operation_state", 1);
 	DataManager::SetValue(TW_ACTION_BUSY, 0);
 	blankTimer.resetTimerAndUnblank();
+	property_set("twrp.action_complete", "1");
 	time(&Stop);
 	if ((int) difftime(Stop, Start) > 10)
 		DataManager::Vibrate("tw_action_vibrate");
@@ -565,9 +528,8 @@ int GUIAction::reboot(std::string arg)
 	return 0;
 }
 
-int GUIAction::home(std::string arg)
+int GUIAction::home(std::string arg __unused)
 {
-	PageManager::SelectPackage("TWRP");
 	gui_changePage("main");
 	return 0;
 }
@@ -582,16 +544,24 @@ int GUIAction::key(std::string arg)
 
 int GUIAction::page(std::string arg)
 {
+	property_set("twrp.action_complete", "0");
 	std::string page_name = gui_parse_text(arg);
 	return gui_changePage(page_name);
 }
 
-int GUIAction::reload(std::string arg)
+int GUIAction::reload(std::string arg __unused)
 {
-	return !TWFunc::reloadTheme();
+	PageManager::RequestReload();
+	// The actual reload is handled in pages.cpp in PageManager::RunReload()
+	// The reload will occur on the next Update or Render call and will
+	// be performed in the rendoer thread instead of the action thread
+	// to prevent crashing which could occur when we start deleting
+	// GUI resources in the action thread while we attempt to render
+	// with those same resources in another thread.
+	return 0;
 }
 
-int GUIAction::readBackup(std::string arg)
+int GUIAction::readBackup(std::string arg __unused)
 {
 	string Restore_Name;
 	DataManager::GetValue("tw_restore", Restore_Name);
@@ -627,12 +597,12 @@ int GUIAction::mount(std::string arg)
 		if (!simulate)
 			PartitionManager.usb_storage_enable();
 		else
-			gui_print("Simulating actions...\n");
+			gui_msg("simulating=Simulating actions...");
 	} else if (!simulate) {
 		PartitionManager.Mount_By_Path(arg, true);
 		PartitionManager.Add_MTP_Storage(arg);
 	} else
-		gui_print("Simulating actions...\n");
+		gui_msg("simulating=Simulating actions...");
 	return 0;
 }
 
@@ -642,20 +612,20 @@ int GUIAction::unmount(std::string arg)
 		if (!simulate)
 			PartitionManager.usb_storage_disable();
 		else
-			gui_print("Simulating actions...\n");
+			gui_msg("simulating=Simulating actions...");
 		DataManager::SetValue(TW_ACTION_BUSY, 0);
 	} else if (!simulate) {
 		PartitionManager.UnMount_By_Path(arg, true);
 	} else
-		gui_print("Simulating actions...\n");
+		gui_msg("simulating=Simulating actions...");
 	return 0;
 }
 
-int GUIAction::restoredefaultsettings(std::string arg)
+int GUIAction::restoredefaultsettings(std::string arg __unused)
 {
 	operation_start("Restore Defaults");
 	if (simulate) // Simulated so that people don't accidently wipe out the "simulation is on" setting
-		gui_print("Simulating actions...\n");
+		gui_msg("simulating=Simulating actions...");
 	else {
 		DataManager::ResetDefaults();
 		PartitionManager.Update_System_Details();
@@ -665,7 +635,7 @@ int GUIAction::restoredefaultsettings(std::string arg)
 	return 0;
 }
 
-int GUIAction::copylog(std::string arg)
+int GUIAction::copylog(std::string arg __unused)
 {
 	operation_start("Copy Log");
 	if (!simulate)
@@ -676,7 +646,7 @@ int GUIAction::copylog(std::string arg)
 		TWFunc::copy_file("/tmp/recovery.log", dst.c_str(), 0755);
 		tw_set_default_metadata(dst.c_str());
 		sync();
-		gui_print("Copied recovery log to %s.\n", DataManager::GetCurrentStoragePath().c_str());
+		gui_msg(Msg("copy_log=Copied recovery log to {1}.")(DataManager::GetCurrentStoragePath()));
 	} else
 		simulate_progress_bar();
 	operation_end(0);
@@ -740,7 +710,7 @@ int GUIAction::compute(std::string arg)
 	return -1;
 }
 
-int GUIAction::setguitimezone(std::string arg)
+int GUIAction::setguitimezone(std::string arg __unused)
 {
 	string SelectedZone;
 	DataManager::GetValue(TW_TIME_ZONE_GUISEL, SelectedZone); // read the selected time zone into SelectedZone
@@ -770,10 +740,10 @@ int GUIAction::overlay(std::string arg)
 	return gui_changeOverlay(arg);
 }
 
-int GUIAction::queuezip(std::string arg)
+int GUIAction::queuezip(std::string arg __unused)
 {
 	if (zip_queue_index >= 10) {
-		gui_print("Maximum zip queue reached!\n");
+		gui_msg("max_queue=Maximum zip queue reached!");
 		return 0;
 	}
 	DataManager::GetValue("tw_filename", zip_queue[zip_queue_index]);
@@ -784,10 +754,10 @@ int GUIAction::queuezip(std::string arg)
 	return 0;
 }
 
-int GUIAction::cancelzip(std::string arg)
+int GUIAction::cancelzip(std::string arg __unused)
 {
 	if (zip_queue_index <= 0) {
-		gui_print("Minimum zip queue reached!\n");
+		gui_msg("min_queue=Minimum zip queue reached!");
 		return 0;
 	} else {
 		zip_queue_index--;
@@ -796,7 +766,7 @@ int GUIAction::cancelzip(std::string arg)
 	return 0;
 }
 
-int GUIAction::queueclear(std::string arg)
+int GUIAction::queueclear(std::string arg __unused)
 {
 	zip_queue_index = 0;
 	DataManager::SetValue(TW_ZIP_QUEUE_COUNT, zip_queue_index);
@@ -811,7 +781,7 @@ int GUIAction::sleep(std::string arg)
 	return 0;
 }
 
-int GUIAction::appenddatetobackupname(std::string arg)
+int GUIAction::appenddatetobackupname(std::string arg __unused)
 {
 	operation_start("AppendDateToBackupName");
 	string Backup_Name;
@@ -824,7 +794,7 @@ int GUIAction::appenddatetobackupname(std::string arg)
 	return 0;
 }
 
-int GUIAction::generatebackupname(std::string arg)
+int GUIAction::generatebackupname(std::string arg __unused)
 {
 	operation_start("GenerateBackupName");
 	TWFunc::Auto_Generate_Backup_Name();
@@ -834,23 +804,25 @@ int GUIAction::generatebackupname(std::string arg)
 
 int GUIAction::checkpartitionlist(std::string arg)
 {
-	string Wipe_List, wipe_path;
+	string List, part_path;
 	int count = 0;
 
-	DataManager::GetValue("tw_wipe_list", Wipe_List);
-	LOGINFO("checkpartitionlist list '%s'\n", Wipe_List.c_str());
-	if (!Wipe_List.empty()) {
-		size_t start_pos = 0, end_pos = Wipe_List.find(";", start_pos);
-		while (end_pos != string::npos && start_pos < Wipe_List.size()) {
-			wipe_path = Wipe_List.substr(start_pos, end_pos - start_pos);
-			LOGINFO("checkpartitionlist wipe_path '%s'\n", wipe_path.c_str());
-			if (wipe_path == "/and-sec" || wipe_path == "DALVIK" || wipe_path == "INTERNAL") {
+	if (arg.empty())
+		arg = "tw_wipe_list";
+	DataManager::GetValue(arg, List);
+	LOGINFO("checkpartitionlist list '%s'\n", List.c_str());
+	if (!List.empty()) {
+		size_t start_pos = 0, end_pos = List.find(";", start_pos);
+		while (end_pos != string::npos && start_pos < List.size()) {
+			part_path = List.substr(start_pos, end_pos - start_pos);
+			LOGINFO("checkpartitionlist part_path '%s'\n", part_path.c_str());
+			if (part_path == "/and-sec" || part_path == "DALVIK" || part_path == "INTERNAL") {
 				// Do nothing
 			} else {
 				count++;
 			}
 			start_pos = end_pos + 1;
-			end_pos = Wipe_List.find(";", start_pos);
+			end_pos = List.find(";", start_pos);
 		}
 		DataManager::SetValue("tw_check_partition_list", count);
 	} else {
@@ -861,27 +833,30 @@ int GUIAction::checkpartitionlist(std::string arg)
 
 int GUIAction::getpartitiondetails(std::string arg)
 {
-	string Wipe_List, wipe_path;
+	string List, part_path;
 	int count = 0;
 
-	DataManager::GetValue("tw_wipe_list", Wipe_List);
-	LOGINFO("getpartitiondetails list '%s'\n", Wipe_List.c_str());
-	if (!Wipe_List.empty()) {
-		size_t start_pos = 0, end_pos = Wipe_List.find(";", start_pos);
-		while (end_pos != string::npos && start_pos < Wipe_List.size()) {
-			wipe_path = Wipe_List.substr(start_pos, end_pos - start_pos);
-			LOGINFO("getpartitiondetails wipe_path '%s'\n", wipe_path.c_str());
-			if (wipe_path == "/and-sec" || wipe_path == "DALVIK" || wipe_path == "INTERNAL") {
+	if (arg.empty())
+		arg = "tw_wipe_list";
+	DataManager::GetValue(arg, List);
+	LOGINFO("getpartitiondetails list '%s'\n", List.c_str());
+	if (!List.empty()) {
+		size_t start_pos = 0, end_pos = List.find(";", start_pos);
+		part_path = List;
+		while (end_pos != string::npos && start_pos < List.size()) {
+			part_path = List.substr(start_pos, end_pos - start_pos);
+			LOGINFO("getpartitiondetails part_path '%s'\n", part_path.c_str());
+			if (part_path == "/and-sec" || part_path == "DALVIK" || part_path == "INTERNAL") {
 				// Do nothing
 			} else {
-				DataManager::SetValue("tw_partition_path", wipe_path);
+				DataManager::SetValue("tw_partition_path", part_path);
 				break;
 			}
 			start_pos = end_pos + 1;
-			end_pos = Wipe_List.find(";", start_pos);
+			end_pos = List.find(";", start_pos);
 		}
-		if (!wipe_path.empty()) {
-			TWPartition* Part = PartitionManager.Find_Partition_By_Path(wipe_path);
+		if (!part_path.empty()) {
+			TWPartition* Part = PartitionManager.Find_Partition_By_Path(part_path);
 			if (Part) {
 				unsigned long long mb = 1048576;
 
@@ -903,11 +878,11 @@ int GUIAction::getpartitiondetails(std::string arg)
 					DataManager::SetValue("tw_partition_can_resize", 1);
 				else
 					DataManager::SetValue("tw_partition_can_resize", 0);
-				if (TWFunc::Path_Exists("/sbin/mkdosfs"))
+				if (TWFunc::Path_Exists("/sbin/mkfs.fat"))
 					DataManager::SetValue("tw_partition_vfat", 1);
 				else
 					DataManager::SetValue("tw_partition_vfat", 0);
-				if (TWFunc::Path_Exists("/sbin/mkfs.exfat"))
+				if (TWFunc::Path_Exists("/sbin/mkexfatfs"))
 					DataManager::SetValue("tw_partition_exfat", 1);
 				else
 					DataManager::SetValue("tw_partition_exfat", 0);
@@ -921,16 +896,18 @@ int GUIAction::getpartitiondetails(std::string arg)
 					DataManager::SetValue("tw_partition_ext", 0);
 				return 0;
 			} else {
-				LOGERR("Unable to locate partition: '%s'\n", wipe_path.c_str());
+				LOGERR("Unable to locate partition: '%s'\n", part_path.c_str());
 			}
 		}
 	}
 	DataManager::SetValue("tw_partition_name", "");
 	DataManager::SetValue("tw_partition_file_system", "");
+	// Set this to 0 to prevent trying to partition this device, just in case
+	DataManager::SetValue("tw_partition_removable", 0);
 	return 0;
 }
 
-int GUIAction::screenshot(std::string arg)
+int GUIAction::screenshot(std::string arg __unused)
 {
 	time_t tm;
 	char path[256];
@@ -951,7 +928,7 @@ int GUIAction::screenshot(std::string arg)
 		strcpy(path, "/tmp/");
 	}
 
-	if(!TWFunc::Create_Dir_Recursive(path, 0666, uid, gid))
+	if(!TWFunc::Create_Dir_Recursive(path, 0775, uid, gid))
 		return 0;
 
 	tm = time(NULL);
@@ -960,15 +937,12 @@ int GUIAction::screenshot(std::string arg)
 	// Screenshot_2014-01-01-18-21-38.png
 	strftime(path+path_len, sizeof(path)-path_len, "Screenshot_%Y-%m-%d-%H-%M-%S.png", localtime(&tm));
 
-	gui_setRenderEnabled(0);
 	int res = gr_save_screenshot(path);
-	gui_setRenderEnabled(1);
-
 	if(res == 0) {
 		chmod(path, 0666);
 		chown(path, uid, gid);
 
-		gui_print("Screenshot was saved to %s\n", path);
+		gui_msg(Msg("screenshot_saved=Screenshot was saved to {1}")(path));
 
 		// blink to notify that the screenshow was taken
 		gr_color(255, 255, 255, 255);
@@ -976,7 +950,7 @@ int GUIAction::screenshot(std::string arg)
 		gr_flip();
 		gui_forceRender();
 	} else {
-		LOGERR("Failed to take a screenshot!\n");
+		gui_err("screenshot_err=Failed to take a screenshot!");
 	}
 	return 0;
 }
@@ -1002,7 +976,7 @@ int GUIAction::fileexists(std::string arg)
 void GUIAction::reinject_after_flash()
 {
 	if (DataManager::GetIntValue(TW_HAS_INJECTTWRP) == 1 && DataManager::GetIntValue(TW_INJECT_AFTER_ZIP) == 1) {
-		gui_print("Injecting TWRP into boot image...\n");
+		gui_msg("injecttwrp=Injecting TWRP into boot image...");
 		if (simulate) {
 			simulate_progress_bar();
 		} else {
@@ -1013,14 +987,8 @@ void GUIAction::reinject_after_flash()
 				string injectcmd = "injecttwrp --dump /tmp/backup_recovery_ramdisk.img /tmp/injected_boot.img --flash bd=" + Boot->Actual_Block_Device;
 				TWFunc::Exec_Cmd(injectcmd);
 			}
-			gui_print("TWRP injection complete.\n");
+			gui_msg("done=Done.");
 		}
-	}
-
-	if(DataManager::GetIntValue(TW_AUTO_INJECT_MROM) == 1 && MultiROM::folderExists())
-	{
-		gui_print("Injecting boot.img with MultiROM...\n");
-		MultiROM::injectBoot(MultiROM::getBootDev(), true);
 	}
 }
 
@@ -1042,7 +1010,7 @@ int GUIAction::flash(std::string arg)
 		ret_val = flash_zip(zip_path, &wipe_cache);
 		TWFunc::SetPerformanceMode(false);
 		if (ret_val != 0) {
-			gui_print("Error flashing zip '%s'\n", zip_path.c_str());
+			gui_msg(Msg(msg::kError, "zip_err=Error installing zip file '{1}'")(zip_path));
 			ret_val = 1;
 			break;
 		}
@@ -1050,12 +1018,11 @@ int GUIAction::flash(std::string arg)
 	zip_queue_index = 0;
 
 	if (wipe_cache) {
-		gui_print("One or more zip requested a cache wipe\nWiping cache now.\n");
+		gui_msg("zip_wipe_cache=One or more zip requested a cache wipe -- Wiping cache now.");
 		PartitionManager.Wipe_By_Path("/cache");
 	}
 
 	reinject_after_flash();
-
 	PartitionManager.Update_System_Details();
 	operation_end(ret_val);
 	DataManager::SetValue(TW_ZIP_QUEUE_COUNT, zip_queue_index);
@@ -1113,7 +1080,7 @@ int GUIAction::wipe(std::string arg)
 					LOGINFO("wipe_path '%s'\n", wipe_path.c_str());
 					if (wipe_path == "/and-sec") {
 						if (!PartitionManager.Wipe_Android_Secure()) {
-							LOGERR("Unable to wipe android secure\n");
+							gui_msg("and_sec_wipe_err=Unable to wipe android secure");
 							ret_val = false;
 							break;
 						} else {
@@ -1121,7 +1088,7 @@ int GUIAction::wipe(std::string arg)
 						}
 					} else if (wipe_path == "DALVIK") {
 						if (!PartitionManager.Wipe_Dalvik_Cache()) {
-							LOGERR("Failed to wipe dalvik\n");
+							gui_err("dalvik_wipe_err=Failed to wipe dalvik");
 							ret_val = false;
 							break;
 						} else {
@@ -1137,7 +1104,7 @@ int GUIAction::wipe(std::string arg)
 					}
 					if (!skip) {
 						if (!PartitionManager.Wipe_By_Path(wipe_path)) {
-							LOGERR("Unable to wipe '%s'\n", wipe_path.c_str());
+							gui_msg(Msg(msg::kError, "unable_to_wipe=Unable to wipe {1}.")(wipe_path));
 							ret_val = false;
 							break;
 						} else if (wipe_path == DataManager::GetSettingsStoragePath()) {
@@ -1177,7 +1144,7 @@ int GUIAction::wipe(std::string arg)
 	return 0;
 }
 
-int GUIAction::refreshsizes(std::string arg)
+int GUIAction::refreshsizes(std::string arg __unused)
 {
 	operation_start("Refreshing Sizes");
 	if (simulate) {
@@ -1202,14 +1169,15 @@ int GUIAction::nandroid(std::string arg)
 		if (arg == "backup") {
 			string Backup_Name;
 			DataManager::GetValue(TW_BACKUP_NAME, Backup_Name);
-			if (Backup_Name == "(Auto Generate)" || Backup_Name == "(Current Date)" || Backup_Name == "0" || Backup_Name == "(" || PartitionManager.Check_Backup_Name(true) == 0) {
+			string auto_gen = gui_lookup("auto_generate", "(Auto Generate)");
+			if (Backup_Name == auto_gen || Backup_Name == gui_lookup("curr_date", "(Current Date)") || Backup_Name == "0" || Backup_Name == "(" || PartitionManager.Check_Backup_Name(true) == 0) {
 				ret = PartitionManager.Run_Backup();
 			}
 			else {
 				operation_end(1);
 				return -1;
 			}
-			DataManager::SetValue(TW_BACKUP_NAME, "(Auto Generate)");
+			DataManager::SetValue(TW_BACKUP_NAME, auto_gen);
 		} else if (arg == "restore") {
 			string Restore_Name;
 			DataManager::GetValue("tw_restore", Restore_Name);
@@ -1228,7 +1196,7 @@ int GUIAction::nandroid(std::string arg)
 		}
 		else {
 			DataManager::SetValue("tw_cancel_backup", 1);
-			gui_print("Backup Canceled.\n");
+			gui_msg("backup_cancel=Backup Cancelled");
 			ret = 0;
 		}
 		operation_end(ret);
@@ -1237,7 +1205,7 @@ int GUIAction::nandroid(std::string arg)
 	return 0;
 }
 
-int GUIAction::cancelbackup(std::string arg) {
+int GUIAction::cancelbackup(std::string arg __unused) {
 	if (simulate) {
 		PartitionManager.stop_backup.set_value(1);
 	}
@@ -1250,7 +1218,7 @@ int GUIAction::cancelbackup(std::string arg) {
 	return 0;
 }
 
-int GUIAction::fixpermissions(std::string arg)
+int GUIAction::fixpermissions(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1281,7 +1249,7 @@ int GUIAction::dd(std::string arg)
 	return 0;
 }
 
-int GUIAction::partitionsd(std::string arg)
+int GUIAction::partitionsd(std::string arg __unused)
 {
 	operation_start("Partition SD Card");
 	int ret_val = 0;
@@ -1292,7 +1260,7 @@ int GUIAction::partitionsd(std::string arg)
 		int allow_partition;
 		DataManager::GetValue(TW_ALLOW_PARTITION_SDCARD, allow_partition);
 		if (allow_partition == 0) {
-			gui_print("This device does not have a real SD Card!\nAborting!\n");
+			gui_err("no_real_sdcard=This device does not have a real SD Card! Aborting!");
 		} else {
 			if (!PartitionManager.Partition_SDCard())
 				ret_val = 1; // failed
@@ -1303,7 +1271,7 @@ int GUIAction::partitionsd(std::string arg)
 
 }
 
-int GUIAction::installhtcdumlock(std::string arg)
+int GUIAction::installhtcdumlock(std::string arg __unused)
 {
 	operation_start("Install HTC Dumlock");
 	if (simulate) {
@@ -1315,7 +1283,7 @@ int GUIAction::installhtcdumlock(std::string arg)
 	return 0;
 }
 
-int GUIAction::htcdumlockrestoreboot(std::string arg)
+int GUIAction::htcdumlockrestoreboot(std::string arg __unused)
 {
 	operation_start("HTC Dumlock Restore Boot");
 	if (simulate) {
@@ -1327,7 +1295,7 @@ int GUIAction::htcdumlockrestoreboot(std::string arg)
 	return 0;
 }
 
-int GUIAction::htcdumlockreflashrecovery(std::string arg)
+int GUIAction::htcdumlockreflashrecovery(std::string arg __unused)
 {
 	operation_start("HTC Dumlock Reflash Recovery");
 	if (simulate) {
@@ -1382,7 +1350,7 @@ int GUIAction::terminalcommand(std::string arg)
 
 		fp = popen(command.c_str(), "r");
 		if (fp == NULL) {
-			LOGERR("Error opening command to run.\n");
+			LOGERR("Error opening command to run (%s).\n", strerror(errno));
 		} else {
 			int fd = fileno(fp), has_data = 0, check = 0, keep_going = -1, bytes_read = 0;
 			struct timeval timeout;
@@ -1423,7 +1391,7 @@ int GUIAction::terminalcommand(std::string arg)
 	return 0;
 }
 
-int GUIAction::killterminal(std::string arg)
+int GUIAction::killterminal(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1437,23 +1405,23 @@ int GUIAction::killterminal(std::string arg)
 	return 0;
 }
 
-int GUIAction::reinjecttwrp(std::string arg)
+int GUIAction::reinjecttwrp(std::string arg __unused)
 {
 	int op_status = 0;
 	operation_start("ReinjectTWRP");
-	gui_print("Injecting TWRP into boot image...\n");
+	gui_msg("injecttwrp=Injecting TWRP into boot image...");
 	if (simulate) {
 		simulate_progress_bar();
 	} else {
 		TWFunc::Exec_Cmd("injecttwrp --dump /tmp/backup_recovery_ramdisk.img /tmp/injected_boot.img --flash");
-		gui_print("TWRP injection complete.\n");
+		gui_msg("done=Done.");
 	}
 
 	operation_end(op_status);
 	return 0;
 }
 
-int GUIAction::checkbackupname(std::string arg)
+int GUIAction::checkbackupname(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1470,7 +1438,7 @@ int GUIAction::checkbackupname(std::string arg)
 	return 0;
 }
 
-int GUIAction::decrypt(std::string arg)
+int GUIAction::decrypt(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1498,6 +1466,7 @@ int GUIAction::decrypt(std::string arg)
 					LOGINFO("Got default contexts and file mode for storage files.\n");
 				}
 			}
+			PartitionManager.Decrypt_Adopted();
 		}
 	}
 
@@ -1505,14 +1474,14 @@ int GUIAction::decrypt(std::string arg)
 	return 0;
 }
 
-int GUIAction::adbsideload(std::string arg)
+int GUIAction::adbsideload(std::string arg __unused)
 {
 	operation_start("Sideload");
 	if (simulate) {
 		simulate_progress_bar();
 		operation_end(0);
 	} else {
-		gui_print("Starting ADB sideload feature...\n");
+		gui_msg("start_sideload=Starting ADB sideload feature...");
 		bool mtp_was_enabled = TWFunc::Toggle_MTP(false);
 
 		// wait for the adb connection
@@ -1521,7 +1490,7 @@ int GUIAction::adbsideload(std::string arg)
 
 		if (ret != 0) {
 			if (ret == -2)
-				gui_print("You need adb 1.0.32 or newer to sideload to this device.\n");
+				gui_msg("need_new_adb=You need adb 1.0.32 or newer to sideload to this device.");
 			ret = 1; // failure
 		} else {
 			int wipe_cache = 0;
@@ -1555,11 +1524,11 @@ int GUIAction::adbsideload(std::string arg)
 	return 0;
 }
 
-int GUIAction::adbsideloadcancel(std::string arg)
+int GUIAction::adbsideloadcancel(std::string arg __unused)
 {
 	struct stat st;
 	DataManager::SetValue("tw_has_cancel", 0); // Remove cancel button from gui
-	gui_print("Cancelling ADB sideload...\n");
+	gui_msg("cancel_sideload=Cancelling ADB sideload...");
 	LOGINFO("Signaling child sideload process to exit.\n");
 	// Calling stat() on this magic filename signals the minadbd
 	// subprocess to shut down.
@@ -1579,49 +1548,20 @@ int GUIAction::adbsideloadcancel(std::string arg)
 	return 0;
 }
 
-int GUIAction::openrecoveryscript(std::string arg)
+int GUIAction::openrecoveryscript(std::string arg __unused)
 {
-	int op_status = 1;
-
 	operation_start("OpenRecoveryScript");
 	if (simulate) {
 		simulate_progress_bar();
 		operation_end(0);
 	} else {
-		// Check for the SCRIPT_FILE_TMP first as these are AOSP recovery commands
-		// that we converted to ORS commands during boot in recovery.cpp.
-		// Run those first.
-		int reboot = 0;
-		if (TWFunc::Path_Exists(SCRIPT_FILE_TMP)) {
-			gui_print("Processing AOSP recovery commands...\n");
-			if (OpenRecoveryScript::run_script_file() == 0) {
-				reboot = 1;
-			}
-		}
-		// Check for the ORS file in /cache and attempt to run those commands.
-		if (OpenRecoveryScript::check_for_script_file()) {
-			gui_print("Processing OpenRecoveryScript file...\n");
-			if (OpenRecoveryScript::run_script_file() == 0) {
-				reboot = 1;
-				op_status = 0;
-			}
-		}
-
-		if (reboot && DataManager::GetIntValue(TW_ORS_IS_SECONDARY_ROM) != 1) {
-			// Disable stock recovery reflashing
-			TWFunc::Disable_Stock_Recovery_Replace();
-			usleep(2000000); // Sleep for 2 seconds before rebooting
-			TWFunc::tw_reboot(rb_system);
-			usleep(5000000); // Sleep for 5 seconds to allow reboot to occur
-		} else {
-			DataManager::SetValue("tw_page_done", 1);
-		}
+		int op_status = OpenRecoveryScript::Run_OpenRecoveryScript_Action();
 		operation_end(op_status);
 	}
 	return 0;
 }
 
-int GUIAction::installsu(std::string arg)
+int GUIAction::installsu(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1637,7 +1577,7 @@ int GUIAction::installsu(std::string arg)
 	return 0;
 }
 
-int GUIAction::fixsu(std::string arg)
+int GUIAction::fixsu(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1653,7 +1593,7 @@ int GUIAction::fixsu(std::string arg)
 	return 0;
 }
 
-int GUIAction::decrypt_backup(std::string arg)
+int GUIAction::decrypt_backup(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1677,7 +1617,7 @@ int GUIAction::decrypt_backup(std::string arg)
 	return 0;
 }
 
-int GUIAction::repair(std::string arg)
+int GUIAction::repair(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1690,7 +1630,6 @@ int GUIAction::repair(std::string arg)
 		if (PartitionManager.Repair_By_Path(part_path, true)) {
 			op_status = 0; // success
 		} else {
-			LOGERR("Error repairing file system.\n");
 			op_status = 1; // fail
 		}
 	}
@@ -1699,7 +1638,7 @@ int GUIAction::repair(std::string arg)
 	return 0;
 }
 
-int GUIAction::resize(std::string arg)
+int GUIAction::resize(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1712,7 +1651,6 @@ int GUIAction::resize(std::string arg)
 		if (PartitionManager.Resize_By_Path(part_path, true)) {
 			op_status = 0; // success
 		} else {
-			LOGERR("Error resizing file system.\n");
 			op_status = 1; // fail
 		}
 	}
@@ -1721,7 +1659,7 @@ int GUIAction::resize(std::string arg)
 	return 0;
 }
 
-int GUIAction::changefilesystem(std::string arg)
+int GUIAction::changefilesystem(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1735,7 +1673,7 @@ int GUIAction::changefilesystem(std::string arg)
 		if (PartitionManager.Wipe_By_Path(part_path, file_system)) {
 			op_status = 0; // success
 		} else {
-			LOGERR("Error changing file system.\n");
+			gui_err("change_fs_err=Error changing file system.");
 			op_status = 1; // fail
 		}
 	}
@@ -1744,7 +1682,7 @@ int GUIAction::changefilesystem(std::string arg)
 	return 0;
 }
 
-int GUIAction::startmtp(std::string arg)
+int GUIAction::startmtp(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1758,7 +1696,7 @@ int GUIAction::startmtp(std::string arg)
 	return 0;
 }
 
-int GUIAction::stopmtp(std::string arg)
+int GUIAction::stopmtp(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1772,7 +1710,7 @@ int GUIAction::stopmtp(std::string arg)
 	return 0;
 }
 
-int GUIAction::flashimage(std::string arg)
+int GUIAction::flashimage(std::string arg __unused)
 {
 	int op_status = 0;
 
@@ -1790,9 +1728,20 @@ int GUIAction::flashimage(std::string arg)
 	return 0;
 }
 
+int GUIAction::twcmd(std::string arg)
+{
+	operation_start("TWRP CLI Command");
+	if (simulate)
+		simulate_progress_bar();
+	else
+		OpenRecoveryScript::Run_CLI_Command(arg.c_str());
+	operation_end(0);
+	return 0;
+}
+
 int GUIAction::getKeyByName(std::string key)
 {
-	if (key == "home")			return KEY_HOME;
+	if (key == "home")		return KEY_HOMEPAGE;  // note: KEY_HOME is cursor movement (like KEY_END)
 	else if (key == "menu")		return KEY_MENU;
 	else if (key == "back")	 	return KEY_BACK;
 	else if (key == "search")	return KEY_SEARCH;
@@ -1808,37 +1757,6 @@ int GUIAction::getKeyByName(std::string key)
 	}
 
 	return atol(key.c_str());
-}
-
-int GUIAction::mountsystemtoggle(std::string arg)
-{
-	int op_status = 0;
-	bool remount_system = PartitionManager.Is_Mounted_By_Path("/system");
-
-	operation_start("Toggle System Mount");
-	if (!PartitionManager.UnMount_By_Path("/system", true)) {
-		op_status = 1; // fail
-	} else {
-		TWPartition* Part = PartitionManager.Find_Partition_By_Path("/system");
-		if (Part) {
-			if (arg == "0") {
-				DataManager::SetValue("tw_mount_system_ro", 0);
-				Part->Change_Mount_Read_Only(false);
-			} else {
-				DataManager::SetValue("tw_mount_system_ro", 1);
-				Part->Change_Mount_Read_Only(true);
-			}
-			if (remount_system) {
-				Part->Mount(true);
-			}
-			op_status = 0; // success
-		} else {
-			op_status = 1; // fail
-		}
-	}
-
-	operation_end(op_status);
-	return 0;
 }
 
 int GUIAction::checkpartitionlifetimewrites(std::string arg)
@@ -1862,778 +1780,61 @@ int GUIAction::checkpartitionlifetimewrites(std::string arg)
 	return 0;
 }
 
-int GUIAction::rotation(std::string arg)
-{
-	int rot = atoi(arg.c_str());
-
-	if(rot == gr_get_rotation())
-		return 0;
-
-	return !gui_rotate(rot);
-}
-
-int GUIAction::timeout(std::string arg)
-{
-#ifndef TW_NO_SCREEN_TIMEOUT
-	blankTimer.blankScreen();
-#endif
-	return 0;
-}
-
-int GUIAction::multirom(std::string arg)
-{
-	if(MultiROM::folderExists())
-		return gui_changePage("multirom_main");
-	else
-	{
-		DataManager::SetValue("tw_mrom_title", "MultiROM is not installed!");
-		DataManager::SetValue("tw_mrom_text1", "/data/media/multirom not found.");
-		DataManager::SetValue("tw_mrom_text2", "/data/media/0/multirom not found.");
-		DataManager::SetValue("tw_mrom_back", "advanced");
-		return gui_changePage("multirom_msg");
-	}
-}
-
-int GUIAction::multirom_reset_roms_paths(std::string arg)
-{
-	MultiROM::setRomsPath(INTERNAL_MEM_LOC_TXT);
-	DataManager::SetValue("tw_multirom_folder", MultiROM::getRomsPath());
-	DataManager::SetValue("tw_multirom_install_loc", INTERNAL_MEM_LOC_TXT);
-	return 0;
-}
-
-int GUIAction::multirom_rename(std::string arg)
-{
-	std::string new_name = arg;
-	TWFunc::trim(new_name);
-	MultiROM::move(DataManager::GetStrValue("tw_multirom_rom_name"), new_name);
-	return gui_changePage("multirom_list");
-}
-
-int GUIAction::multirom_manage(std::string arg)
-{
-	std::string name = DataManager::GetStrValue("tw_multirom_rom_name");
-	int type = MultiROM::getType(name);
-	DataManager::SetValue("tw_multirom_is_android", (M(type) & MASK_ANDROID) != 0);
-	DataManager::SetValue("tw_multirom_is_ubuntu", (M(type) & MASK_UBUNTU) != 0);
-	DataManager::SetValue("tw_multirom_is_touch", (M(type) & MASK_UTOUCH) != 0);
-	DataManager::SetValue("tw_multirom_is_sailfish", (M(type) & MASK_SAILFISH) != 0);
-	if((M(type) & MASK_ANDROID) != 0)
-	{
-		std::string path = MultiROM::getRomsPath() + "/" + name + "/boot.img";
-		DataManager::SetValue("tw_multirom_has_bootimg", access(path.c_str(), F_OK) >= 0);
-	}
-	DataManager::SetValue("tw_multirom_has_fw_partition", MultiROM::hasFirmwareDev());
-	if(MultiROM::hasFirmwareDev())
-	{
-		std::string fw_file = MultiROM::getRomsPath() + DataManager::GetStrValue("tw_multirom_rom_name") + "/firmware.img";
-		DataManager::SetValue("tw_multirom_has_fw_image", int(access(fw_file.c_str(), F_OK) >= 0));
-	}
-	return gui_changePage("multirom_manage");
-}
-
-int GUIAction::multirom_settings(std::string arg)
-{
-	MultiROM::config cfg = MultiROM::loadConfig();
-
-	if(cfg.auto_boot_type & MROM_AUTOBOOT_CHECK_KEYS)
-		DataManager::SetValue("tw_multirom_auto_boot_trigger", MROM_AUTOBOOT_TRIGGER_KEYS);
-	else if(cfg.auto_boot_seconds > 0)
-		DataManager::SetValue("tw_multirom_auto_boot_trigger", MROM_AUTOBOOT_TRIGGER_TIME);
-	else
-		DataManager::SetValue("tw_multirom_auto_boot_trigger", MROM_AUTOBOOT_TRIGGER_DISABLED);
-
-	if(cfg.auto_boot_seconds <= 0)
-		DataManager::SetValue("tw_multirom_delay", 5);
-	else
-		DataManager::SetValue("tw_multirom_delay", cfg.auto_boot_seconds);
-	DataManager::SetValue("tw_multirom_current", cfg.current_rom);
-	DataManager::SetValue("tw_multirom_auto_boot_rom", cfg.auto_boot_rom);
-	DataManager::SetValue("tw_multirom_auto_boot_type", (cfg.auto_boot_type & MROM_AUTOBOOT_LAST));
-	DataManager::SetValue("tw_multirom_colors", cfg.colors);
-	DataManager::SetValue("tw_multirom_brightness", cfg.brightness);
-	DataManager::SetValue("tw_multirom_enable_adb", cfg.enable_adb);
-	DataManager::SetValue("tw_multirom_hide_internal", cfg.hide_internal);
-	DataManager::SetValue("tw_multirom_int_display_name", cfg.int_display_name);
-	DataManager::SetValue("tw_multirom_rotation", cfg.rotation);
-	DataManager::SetValue("tw_multirom_force_generic_fb", cfg.force_generic_fb);
-	DataManager::SetValue("tw_anim_duration_coef_pct", cfg.anim_duration_coef_pct);
-
-	DataManager::SetValue("tw_multirom_unrecognized_opts", cfg.unrecognized_opts);
-
-	DataManager::SetValue("tw_multirom_roms", MultiROM::listRoms());
-	return gui_changePage("multirom_settings");
-}
-
-int GUIAction::multirom_settings_save(std::string arg)
-{
-	MultiROM::config cfg;
-	cfg.current_rom = DataManager::GetStrValue("tw_multirom_current");
-	cfg.auto_boot_type = DataManager::GetIntValue("tw_multirom_auto_boot_type");
-	switch(DataManager::GetIntValue("tw_multirom_auto_boot_trigger"))
-	{
-		case MROM_AUTOBOOT_TRIGGER_DISABLED:
-			cfg.auto_boot_seconds = 0;
-			break;
-		case MROM_AUTOBOOT_TRIGGER_TIME:
-			cfg.auto_boot_seconds = DataManager::GetIntValue("tw_multirom_delay");
-			break;
-		case MROM_AUTOBOOT_TRIGGER_KEYS:
-			cfg.auto_boot_type |= MROM_AUTOBOOT_CHECK_KEYS;
-			break;
-	}
-	cfg.auto_boot_rom = DataManager::GetStrValue("tw_multirom_auto_boot_rom");
-	cfg.colors = DataManager::GetIntValue("tw_multirom_colors");
-	cfg.brightness = DataManager::GetIntValue("tw_multirom_brightness");
-	cfg.enable_adb = DataManager::GetIntValue("tw_multirom_enable_adb");
-	cfg.hide_internal = DataManager::GetIntValue("tw_multirom_hide_internal");
-	cfg.int_display_name = DataManager::GetStrValue("tw_multirom_int_display_name");
-	cfg.rotation = DataManager::GetIntValue("tw_multirom_rotation");
-	cfg.force_generic_fb = DataManager::GetIntValue("tw_multirom_force_generic_fb");
-	cfg.anim_duration_coef_pct = DataManager::GetIntValue("tw_anim_duration_coef_pct");
-
-	cfg.unrecognized_opts = DataManager::GetStrValue("tw_multirom_unrecognized_opts");
-
-	MultiROM::saveConfig(cfg);
-	return 0;
-}
-
-int GUIAction::multirom_add(std::string arg)
-{
-	DataManager::SetValue("tw_multirom_install_loc_list", MultiROM::listInstallLocations());
-	DataManager::SetValue("tw_multirom_install_loc", INTERNAL_MEM_LOC_TXT);
-	MultiROM::updateSupportedSystems();
-	return gui_changePage("multirom_add");
-}
-
-int GUIAction::multirom_add_second(std::string arg)
-{
-	switch(DataManager::GetIntValue("tw_multirom_type"))
-	{
-		case 1:
-			return gui_changePage("multirom_add_source");
-		case 5:
-			DataManager::SetValue("tw_sailfish_filename_base", "");
-			DataManager::SetValue("tw_sailfish_filename_rootfs", "");
-			return gui_changePage("multirom_add_sailfish");
-		default:
-			return gui_changePage("multirom_add_select");
-	}
-}
-
-int GUIAction::multirom_add_file_selected(std::string arg)
-{
-	std::string loc = DataManager::GetStrValue("tw_multirom_install_loc");
-	bool images = MultiROM::installLocNeedsImages(loc);
-	int type = DataManager::GetIntValue("tw_multirom_type");
-
-	MultiROM::clearBaseFolders();
-
-	if(type == 1 || type == 2 || type == 5)
-	{
-		switch(type)
-		{
-			case 1: // Android
-				MultiROM::addBaseFolder("data", DATA_IMG_MINSIZE, DATA_IMG_DEFSIZE);
-				MultiROM::addBaseFolder("system", SYS_IMG_MINSIZE, SYS_IMG_DEFSIZE);
-				MultiROM::addBaseFolder("cache", CACHE_IMG_MINSIZE, CACHE_IMG_DEFSIZE);
-				break;
-			case 2: // Ubuntu dekstop
-				MultiROM::addBaseFolder("root", UB_DATA_IMG_MINSIZE, UB_DATA_IMG_DEFSIZE);
-				break;
-			case 5: // SailfishOS
-				MultiROM::addBaseFolder("data", SAILFISH_DATA_IMG_MINSIZE, SAILFISH_DATA_IMG_DEFSIZE);
-				MultiROM::addBaseFolder("system", SYS_IMG_MINSIZE, SYS_IMG_DEFSIZE);
-				MultiROM::addBaseFolder("cache", CACHE_IMG_MINSIZE, CACHE_IMG_DEFSIZE);
-				break;
-		}
-
-		MultiROM::updateImageVariables();
-
-		if(images)
-			return gui_changePage("multirom_add_image_size");
-		else
-			return gui_changePage("multirom_add_start_process");
-	}
-	else if(type == 3)
-	{
-		DataManager::SetValue("tw_mrom_back", "multirom_add");
-		DataManager::SetValue("tw_mrom_text2", "");
-
-		std:string ex;
-		MROMInstaller *i = new MROMInstaller();
-
-		DataManager::SetValue("tw_mrom_title", "Bad installer");
-		if(!(ex = i->open(DataManager::GetStrValue("tw_filename"))).empty())
-			return i->destroyWithErrorMsg(ex);
-
-		DataManager::SetValue("tw_mrom_title", "Unsupported device");
-		if(!(ex = i->checkDevices()).empty())
-			return i->destroyWithErrorMsg(ex);
-
-		DataManager::SetValue("tw_mrom_title", "Old MultiROM");
-		if(!(ex = i->checkVersion()).empty())
-			return i->destroyWithErrorMsg(ex);
-
-		DataManager::SetValue("tw_mrom_title", "Unsupported install location");
-		if(!(ex = i->setInstallLoc(loc, images)).empty())
-			return i->destroyWithErrorMsg(ex);
-
-		if(!(ex = i->parseBaseFolders(loc.find("ntfs") != std::string::npos)).empty())
-			return i->destroyWithErrorMsg(ex);
-
-		MultiROM::updateImageVariables();
-		MultiROM::setInstaller(i);
-
-		if(images)
-			return gui_changePage("multirom_add_image_size");
-		else
-			return gui_changePage("multirom_add_start_process");
-	}
-	return 0;
-}
-
-int GUIAction::multirom_change_img_size(std::string arg)
-{
-	DataManager::SetValue("tw_multirom_image_too_small", 0);
-	DataManager::SetValue("tw_multirom_image_too_big", 0);
-	DataManager::SetValue("tw_multirom_image_name", arg);
-
-	base_folder *b = MultiROM::getBaseFolder(arg);
-	if(b != NULL)
-		DataManager::SetValue("tw_multirom_image_size", b->size);
-
-	return gui_changePage("multirom_change_img_size");
-}
-
-int GUIAction::multirom_change_img_size_act(std::string arg)
-{
-	int value = DataManager::GetIntValue("tw_multirom_image_size");
-
-	base_folder *b = MultiROM::getBaseFolder(DataManager::GetStrValue("tw_multirom_image_name"));
-	if(!b)
-		return gui_changePage("multirom_add_image_size");
-
-	DataManager::SetValue("tw_multirom_image_too_small", 0);
-	DataManager::SetValue("tw_multirom_image_too_big", 0);
-
-	if(value < b->min_size)
-	{
-		DataManager::SetValue("tw_multirom_image_too_small", 1);
-		DataManager::SetValue("tw_multirom_min_size", b->min_size);
-		return gui_changePage("multirom_change_img_size");
-	}
-
-	if(value > 4095 &&
-		DataManager::GetStrValue("tw_multirom_install_loc").find("(vfat") != std::string::npos)
-	{
-		DataManager::SetValue("tw_multirom_image_too_big", 1);
-		return gui_changePage("multirom_change_img_size");
-	}
-
-	b->size = value;
-	MultiROM::updateImageVariables();
-	return gui_changePage("multirom_add_image_size");
-}
-
-int GUIAction::multirom_set_list_loc(std::string arg)
-{
-	DataManager::SetValue("tw_multirom_install_loc_list", MultiROM::listInstallLocations());
-	return gui_changePage("multirom_set_list_loc");
-}
-
-int GUIAction::multirom_list_loc_selected(std::string arg)
-{
-	std::string loc = DataManager::GetStrValue("tw_multirom_install_loc");
-	if(!MultiROM::setRomsPath(loc))
-		MultiROM::setRomsPath(INTERNAL_MEM_LOC_TXT);
-	DataManager::SetValue("tw_multirom_folder", MultiROM::getRomsPath());
-	return gui_changePage("multirom_list");
-}
-
-int GUIAction::multirom_exit_backup(std::string arg)
-{
-	if(DataManager::GetIntValue("multirom_do_backup") == 1)
-	{
-		operation_start("Restoring default backup settings");
-		MultiROM::deinitBackup();
-		operation_end(0);
-	}
-	else if(arg == "multirom_manage")
-		arg = "main";
-
-	return gui_changePage(arg);
-}
-
-int GUIAction::multirom_create_internal_rom_name(std::string arg)
-{
-	std::string name = TWFunc::getROMName();
-	if(name.size() > MAX_ROM_NAME)
-		name.resize(MAX_ROM_NAME);
-	else if(name.empty())
-		name = "unknown";
-
-	TWFunc::stringReplace(name, ' ', '_');
-
-	std::string roms = MultiROM::getRomsPath();
-	for(char i = '1'; TWFunc::Path_Exists(roms + name) && i <= '9'; ++i)
-		name.replace(name.size()-1, 1, 1, i);
-
-	DataManager::SetValue(arg, name);
-	return 0;
-}
-
-int GUIAction::multirom_list_roms_for_swap(std::string arg)
-{
-	const int mask = MASK_ANDROID & (~M(ROM_INTERNAL_PRIMARY));
-	DataManager::SetValue(arg, MultiROM::listRoms(mask, true));
-	return 0;
-}
-
-int GUIAction::multirom_delete(std::string arg)
+int GUIAction::mountsystemtoggle(std::string arg)
 {
 	int op_status = 0;
-	operation_start("Delete ROM");
-	if(!MultiROM::erase(DataManager::GetStrValue("tw_multirom_rom_name")))
-		op_status = 1;
-	PartitionManager.Update_System_Details();
-	operation_end(op_status);
-	return 0;
-}
+	bool remount_system = PartitionManager.Is_Mounted_By_Path("/system");
+	bool remount_vendor = PartitionManager.Is_Mounted_By_Path("/vendor");
 
-int GUIAction::multirom_flash_zip(std::string arg)
-{
-	operation_start("Flashing");
-	int op_status = 0;
-
-	std::string name = DataManager::GetStrValue("tw_multirom_rom_name");
-	std::string boot = MultiROM::getRomsPath() + name + "/boot.img";
-	int had_boot = access(boot.c_str(), F_OK) >= 0;
-
-	DataManager::SetValue("multirom_rom_name_title", 1);
-
-	if (!MultiROM::flashZip(name, DataManager::GetStrValue("tw_filename")))
-		op_status = 1;
-
-	if(!had_boot && MultiROM::compareFiles(MultiROM::getBootDev().c_str(), boot.c_str()))
-		unlink(boot.c_str());
-	else if(op_status == 0)
-	{
-		DataManager::SetValue("tw_multirom_share_kernel", 0);
-		if(!MultiROM::extractBootForROM(MultiROM::getRomsPath() + name))
-			op_status = 1;
-	}
-
-	DataManager::SetValue("multirom_rom_name_title", 0);
-
-	operation_end(op_status);
-	return op_status;
-}
-
-int GUIAction::multirom_flash_zip_sailfish(std::string arg)
-{
-	operation_start("Flashing");
-	int op_status = 0;
-
-	std::string name = DataManager::GetStrValue("tw_multirom_rom_name");
-	std::string root = MultiROM::getRomsPath() + name;
-
-	if(rename((root + "/data/.stowaways/sailfishos/system").c_str(), (root + "/system").c_str()) < 0)
-		gui_print("/system move failed %s", strerror(errno));
-
-
-	if (!MultiROM::flashZip(name, DataManager::GetStrValue("tw_filename")))
-		op_status = 1;
-
-	if(rename((root + "/system").c_str(), (root + "/data/.stowaways/sailfishos/system").c_str()) < 0)
-		gui_print("/system move failed %s", strerror(errno));
-
-	if(!MultiROM::sailfishProcessBoot(root))
-		op_status = 1;
-
-	if(!MultiROM::sailfishProcess(root, name))
-		op_status = 1;
-
-	operation_end(op_status);
-	return 0;
-}
-
-int GUIAction::multirom_inject(std::string arg)
-{
-	operation_start("Injecting");
-	int op_status = 0;
-	std::string path = DataManager::GetStrValue("tw_filename");
-	if(DataManager::GetIntValue("tw_multirom_add_bootimg"))
-		op_status = MultiROM::copyBoot(path, DataManager::GetStrValue("tw_multirom_rom_name"));
-
-	if(!op_status)
-		op_status = !MultiROM::injectBoot(path);
-	operation_end(op_status);
-	return 0;
-}
-
-int GUIAction::multirom_inject_curr_boot(std::string arg)
-{
-	operation_start("Injecting");
-	int op_status = !MultiROM::folderExists();
-	if(op_status)
-		gui_print("MultiROM is not installed!\n");
-	else
-		op_status = !MultiROM::injectBoot(MultiROM::getBootDev());
-	operation_end(op_status);
-	return 0;
-}
-
-int GUIAction::multirom_add_rom(std::string arg)
-{
-	operation_start("Installing");
-	int op_status = !MultiROM::addROM(DataManager::GetStrValue("tw_filename"),
-									  DataManager::GetIntValue("tw_multirom_type"),
-									  DataManager::GetStrValue("tw_multirom_install_loc"));
-	operation_end(op_status);
-	return op_status;
-}
-
-int GUIAction::multirom_ubuntu_patch_init(std::string arg)
-{
-	operation_start("Patching");
-	int op_status = !MultiROM::patchInit(DataManager::GetStrValue("tw_multirom_rom_name"));
-	operation_end(op_status);
-	return 0;
-}
-
-int GUIAction::multirom_touch_patch_init(std::string arg)
-{
-	operation_start("Patching");
-	int op_status = 1;
-	std::string root = MultiROM::getRomsPath() + DataManager::GetStrValue("tw_multirom_rom_name") + "/";
-	if(access((root + "/boot.img").c_str(), F_OK) >= 0)
-	{
-		std::string type;
-		if(access((root + "/data/system.img").c_str(), F_OK) >= 0)
-			type = "ubuntu-touch-sysimage-init";
-		else
-			type = "ubuntu-touch-init";
-
-		gui_print("Patching ubuntu with %s\n", type.c_str());
-		op_status = !MultiROM::ubuntuTouchProcessBoot(root, type.c_str());
-		if(op_status == 0)
-			op_status = !MultiROM::ubuntuTouchProcess(root, DataManager::GetStrValue("tw_multirom_rom_name"));
-	}
-	else
-		LOGERR("This ubuntu installation does not have boot.img, it can't be patched.\n");
-	operation_end(op_status);
-	return 0;
-}
-
-int GUIAction::multirom_wipe(std::string arg)
-{
-	operation_start("Wiping");
-	int op_status = !MultiROM::wipe(DataManager::GetStrValue("tw_multirom_rom_name"),
-									DataManager::GetStrValue("tw_multirom_wipe"));
-	operation_end(op_status);
-	return 0;
-}
-
-int GUIAction::multirom_disable_flash_kernel(std::string arg)
-{
-	operation_start("working");
-	int op_status = !MultiROM::disableFlashKernelAct(DataManager::GetStrValue("tw_multirom_rom_name"),
-													 DataManager::GetStrValue("tw_multirom_install_loc"));
-	operation_end(op_status);
-	return 0;
-}
-
-int GUIAction::multirom_rm_bootimg(std::string arg)
-{
-	operation_start("working");
-	std::string cmd = "rm \"" + MultiROM::getRomsPath() + "/" + DataManager::GetStrValue("tw_multirom_rom_name") + "/boot.img\"";
-	int op_status = (system(cmd.c_str()) != 0);
-
-	operation_end(op_status);
-	return 0;
-}
-
-int GUIAction::multirom_backup_rom(std::string arg)
-{
-	operation_start("Changing mountpoints for backup");
-	int op_status = !MultiROM::initBackup(DataManager::GetStrValue("tw_multirom_rom_name"));
-	operation_end(op_status);
-	if(op_status == 0)
-		return gui_changePage("backup");
-	else
-	{
-		DataManager::SetValue("tw_mrom_title", "Failed to prepare ROM for backup!");
-		DataManager::SetValue("tw_mrom_text1", "See /tmp/recovery.log for more details.");
-		DataManager::SetValue("tw_mrom_text2", "");
-		DataManager::SetValue("tw_mrom_back", "multirom_manage");
-		return gui_changePage("multirom_msg");
-	}
-}
-
-int GUIAction::multirom_sideload(std::string arg)
-{
-	int ret = 0;
-
-	operation_start("Sideload");
-	bool mtp_was_enabled = TWFunc::Toggle_MTP(false);
-
-	if(DataManager::GetStrValue("tw_back") == "multirom_manage")
-		DataManager::SetValue("multirom_rom_name_title", 1);
-
-	gui_print("Starting ADB sideload feature...\n");
-	ret = apply_from_adb("/", &sideload_child_pid);
-	DataManager::SetValue("tw_has_cancel", 0); // Remove cancel button from gui now that the zip install is going to start
-	if (ret != 0) {
-		if (ret == -2)
-			gui_print("You need adb 1.0.32 or newer to sideload to this device.\n");
+	operation_start("Toggle System Mount");
+	if (!PartitionManager.UnMount_By_Path("/system", true)) {
+		op_status = 1; // fail
 	} else {
-		DataManager::SetValue("tw_filename", FUSE_SIDELOAD_HOST_PATHNAME);
-		DataManager::SetValue("tw_mrom_sideloaded", 1);
-
-		if(DataManager::GetStrValue("tw_back") == "multirom_add") {
-			ret = multirom_add_rom("");
-		} else if(DataManager::GetStrValue("tw_back") == "multirom_manage") {
-			ret = multirom_flash_zip("");
-			DataManager::SetValue("tw_back", "multirom_list");
+		TWPartition* Part = PartitionManager.Find_Partition_By_Path("/system");
+		if (Part) {
+			if (arg == "0") {
+				DataManager::SetValue("tw_mount_system_ro", 0);
+				Part->Change_Mount_Read_Only(false);
+			} else {
+				DataManager::SetValue("tw_mount_system_ro", 1);
+				Part->Change_Mount_Read_Only(true);
+			}
+			if (remount_system) {
+				Part->Mount(true);
+			}
+			op_status = 0; // success
+		} else {
+			op_status = 1; // fail
+		}
+		Part = PartitionManager.Find_Partition_By_Path("/vendor");
+		if (Part) {
+			if (arg == "0") {
+				Part->Change_Mount_Read_Only(false);
+			} else {
+				Part->Change_Mount_Read_Only(true);
+			}
+			if (remount_vendor) {
+				Part->Mount(true);
+			}
+			op_status = 0; // success
+		} else {
+			op_status = 1; // fail
 		}
 	}
 
-	if (sideload_child_pid) {
-		LOGINFO("Signaling child sideload process to exit.\n");
-		struct stat st;
-		// Calling stat() on this magic filename signals the minadbd
-		// subprocess to shut down.
-		stat(FUSE_SIDELOAD_HOST_EXIT_PATHNAME, &st);
-		int status;
-		LOGINFO("Waiting for child sideload process to exit.\n");
-		waitpid(sideload_child_pid, &status, 0);
-	}
-
-	TWFunc::Toggle_MTP(mtp_was_enabled);
-	reinject_after_flash();
-	operation_end(ret);
-
-	DataManager::SetValue("multirom_rom_name_title", 0);
+	operation_end(op_status);
 	return 0;
 }
 
-int GUIAction::multirom_swap_calc_space(std::string arg)
+int GUIAction::setlanguage(std::string arg __unused)
 {
-	static const char *parts[] = { "/cache", "/system", "/data" };
-	TWPartition *p;
-	unsigned long long int_size = 0, int_data_size = 0;
-	unsigned long long needed = 0, free = 0;
+	int op_status = 0;
 
-	std::string swap_rom = DataManager::GetStrValue("tw_multirom_swap_rom");
-	int type = DataManager::GetIntValue("tw_multirom_swap_type");
+	operation_start("Set Language");
+	PageManager::LoadLanguage(DataManager::GetStrValue("tw_language"));
+	PageManager::RequestReload();
+	op_status = 0; // success
 
-	operation_start("CalcSpace");
-
-	PartitionManager.Update_System_Details();
-
-	p = PartitionManager.Find_Partition_By_Path(MultiROM::getRomsPath());
-	if(!p)
-	{
-		LOGINFO("multirom_swap_calc_space: failed to find partition for ROMs!\n");
-		operation_end(1);
-		return 0;
-	}
-
-	free = p->GetSizeFree();
-
-	for(size_t i = 0; i < sizeof(parts)/sizeof(parts[0]); ++i)
-	{
-		p = PartitionManager.Find_Partition_By_Path(parts[i]);
-		if(!p)
-		{
-			LOGINFO("multirom_swap_calc_space: failed to get %s!\n", parts[i]);
-			operation_end(1);
-			return 0;
-		}
-
-		int_size += p->GetSizeBackup();
-		if(strcmp("/data", parts[i]) == 0)
-			int_data_size = p->GetSizeBackup();
-	}
-
-	switch(type)
-	{
-		case MROM_SWAP_WITH_SECONDARY:
-			needed = int_size + du.Get_Folder_Size(MultiROM::getRomsPath() + swap_rom + "/data");
-			break;
-		case MROM_SWAP_COPY_SECONDARY:
-		{
-			uint64_t sec_data_size = du.Get_Folder_Size(MultiROM::getRomsPath() + swap_rom + "/data");
-			if(sec_data_size > int_data_size)
-				needed = sec_data_size - int_data_size + 50*1024*1024;
-			break;
-		}
-		case MROM_SWAP_COPY_INTERNAL:
-		case MROM_SWAP_MOVE_INTERNAL:
-			needed = du.Get_Folder_Size(MultiROM::getRomsPath() + swap_rom + "/data");
-			break;
-		case MROM_SWAP_DUPLICATE:
-			needed = du.Get_Folder_Size(MultiROM::getRomsPath() + swap_rom);
-			break;
-	}
-
-	needed /= 1024*1024;
-	free /= 1024*1024;
-	DataManager::SetValue("tw_multirom_swap_needed", needed);
-	DataManager::SetValue("tw_multirom_swap_free", free);
-
-	LOGINFO("multirom_swap_calc_space: needed: %llu MB, free: %llu MB\n", needed, free);
-
-	operation_end(0);
-
-	if(needed >= free)
-	{
-		DataManager::SetValue("tw_multirom_swap_calculating", 0);
-		gui_changeOverlay("multirom_swap_space_info");
-	}
-	else
-	{
-		::sleep(1); // give the user chance to read the overlay
-		gui_changeOverlay("");
-		gui_changePage("action_page");
-	}
-	return 0;
-}
-
-int GUIAction::multirom_execute_swap(std::string arg)
-{
-	operation_start("SwapROMs");
-
-	int res = 1;
-	int type = DataManager::GetIntValue("tw_multirom_swap_type");
-	std::string int_target = DataManager::GetStrValue("tw_multirom_swap_internal_name");
-
-	switch(type)
-	{
-		case MROM_SWAP_WITH_SECONDARY:
-		{
-			std::string src_rom = DataManager::GetStrValue("tw_multirom_swap_rom");
-
-			if(!MultiROM::copyInternal(int_target))
-				break;
-
-			if(!MultiROM::wipeInternal())
-				break;
-
-			if(!MultiROM::copySecondaryToInternal(src_rom))
-				break;
-
-			if(!MultiROM::erase(src_rom))
-				break;
-
-			res = 0;
-			break;
-		}
-		case MROM_SWAP_COPY_SECONDARY:
-		{
-			std::string src_rom = DataManager::GetStrValue("tw_multirom_swap_rom");
-
-			if(!MultiROM::wipeInternal())
-				break;
-
-			if(!MultiROM::copySecondaryToInternal(src_rom))
-				break;
-
-			res = 0;
-			break;
-		}
-		case MROM_SWAP_COPY_INTERNAL:
-			if(MultiROM::copyInternal(int_target))
-				res = 0;
-			break;
-		case MROM_SWAP_MOVE_INTERNAL:
-		{
-			if(!MultiROM::copyInternal(int_target))
-				break;
-
-			if(!MultiROM::wipeInternal())
-				break;
-
-			res = 0;
-			break;
-		}
-		case MROM_SWAP_DUPLICATE:
-		{
-			std::string src_rom = DataManager::GetStrValue("tw_multirom_swap_rom");
-			if(!MultiROM::duplicateSecondary(src_rom, int_target))
-				break;
-			res = 0;
-			break;
-		}
-	}
-
-	PartitionManager.Update_System_Details();
-
-	operation_end(res);
-	return 0;
-}
-
-int GUIAction::multirom_set_fw(std::string arg)
-{
-	operation_start("CopyFW");
-
-	std::string src = DataManager::GetStrValue("tw_filename");
-	std::string dst = MultiROM::getRomsPath() + DataManager::GetStrValue("tw_multirom_rom_name") + "/firmware.img";
-
-	gui_print("Setting ROM's radio.img to %s", src.c_str());
-	int res = TWFunc::copy_file(src, dst, 0755) == 0 ? 0 : 1;
-
-	DataManager::SetValue("tw_multirom_has_fw_image", int(access(dst.c_str(), F_OK) >= 0));
-
-	operation_end(res);
-	return 0;
-}
-
-int GUIAction::multirom_remove_fw(std::string arg)
-{
-	operation_start("RemoveFW");
-
-	gui_print("Removing ROM's radio.img...");
-	std::string dst = MultiROM::getRomsPath() + DataManager::GetStrValue("tw_multirom_rom_name") + "/firmware.img";
-	int res = remove(dst.c_str()) >= 0 ? 0 : 1;
-	DataManager::SetValue("tw_multirom_has_fw_image", int(access(dst.c_str(), F_OK) >= 0));
-
-	operation_end(res);
-	return 0;
-}
-
-int GUIAction::multirom_restorecon(std::string arg)
-{
-	operation_start("restorecon");
-	int res = MultiROM::restorecon(DataManager::GetStrValue("tw_multirom_rom_name")) ? 0 : -1;
-	operation_end(res);
-	return 0;
-}
-
-int GUIAction::system_image_upgrader(std::string arg)
-{
-	operation_start("system-image-upgrader");
-
-	int res = 0;
-
-	if(TWFunc::Path_Exists(UBUNTU_COMMAND_FILE))
-	{
-		gui_print("\n");
-		res = TWFunc::Exec_Cmd_Show_Output("system-image-upgrader "UBUNTU_COMMAND_FILE);
-		gui_print("\n");
-
-		if(res != 0)
-		{
-			gui_print("system-image-upgrader failed\n");
-			res = 1;
-		}
-		DataManager::SetValue("system-image-upgrader-res", res);
-	} else
-		gui_print("Could not find system-image-upgrader command file: "UBUNTU_COMMAND_FILE"\n");
-
-	DataManager::SetValue("tw_page_done", 1);
-	operation_end(res);
-
+	operation_end(op_status);
 	return 0;
 }

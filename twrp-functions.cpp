@@ -35,9 +35,7 @@
 #include <iostream>
 #include <fstream>
 #include <sstream>
-#include <ctype.h>
 #include <algorithm>
-
 #include "twrp-functions.hpp"
 #include "twcommon.h"
 #ifndef BUILD_TWRPTAR_MAIN
@@ -47,6 +45,7 @@
 #include "bootloader.h"
 #include "cutils/properties.h"
 #include "cutils/android_reboot.h"
+#include "gui/gui.hpp"
 #include <sys/reboot.h>
 #endif // ndef BUILD_TWRPTAR_MAIN
 #ifndef TW_EXCLUDE_ENCRYPTED_BACKUPS
@@ -55,18 +54,8 @@
 
 extern "C" {
 	#include "libcrecovery/common.h"
-	#include "minuitwrp/minui.h"
 	#include "set_metadata.h"
 }
-
-#include "gui/objects.hpp"
-
-#ifdef HAVE_SELINUX
-#include <selinux/selinux.h>
-#include <selinux/label.h>
-#include <selinux/android.h>
-#include <selinux/label.h>
-#endif
 
 /* Execute a command */
 int TWFunc::Exec_Cmd(const string& cmd, string &result) {
@@ -106,27 +95,6 @@ int TWFunc::Exec_Cmd(const string& cmd) {
 	}
 }
 
-int TWFunc::Exec_Cmd_Show_Output(const string& cmd) {
-	FILE* exec;
-	char buffer[130];
-	int ret = 0;
-	exec = __popen(cmd.c_str(), "r");
-
-	if (!exec)
-		return -1;
-
-	while(!feof(exec)) {
-		memset(buffer, 0, sizeof(buffer));
-		if (fgets(buffer, 128, exec) != NULL) {
-			buffer[128] = '\n';
-			buffer[129] = NULL;
-			gui_print(buffer);
-		}
-	}
-	ret = __pclose(exec);
-	return ret;
-}
-
 // Returns "file.name" from a full /path/to/file.name
 string TWFunc::Get_Filename(string Path) {
 	size_t pos = Path.find_last_of("/");
@@ -155,12 +123,12 @@ int TWFunc::Wait_For_Child(pid_t pid, int *status, string Child_Name) {
 	rc_pid = waitpid(pid, status, 0);
 	if (rc_pid > 0) {
 		if (WIFSIGNALED(*status)) {
-			LOGERR("%s process ended with signal: %d\n", Child_Name.c_str(), WTERMSIG(*status)); // Seg fault or some other non-graceful termination
+			gui_msg(Msg(msg::kError, "pid_signal={1} process ended with signal: {2}")(Child_Name)(WTERMSIG(*status))); // Seg fault or some other non-graceful termination
 			return -1;
 		} else if (WEXITSTATUS(*status) == 0) {
 			LOGINFO("%s process ended with RC=%d\n", Child_Name.c_str(), WEXITSTATUS(*status)); // Success
 		} else {
-			LOGERR("%s process ended with ERROR=%d\n", Child_Name.c_str(), WEXITSTATUS(*status)); // Graceful exit, but there was an error
+			gui_msg(Msg(msg::kError, "pid_error={1} process ended with ERROR: {2}")(Child_Name)(WEXITSTATUS(*status))); // Graceful exit, but there was an error
 			return -1;
 		}
 	} else { // no PID returned
@@ -240,35 +208,41 @@ int TWFunc::Try_Decrypting_File(string fn, string password) {
 
 	f = fopen(fn.c_str(), "rb");
 	if (f == NULL) {
-		LOGERR("Failed to open '%s' to try decrypt\n", fn.c_str());
+		LOGERR("Failed to open '%s' to try decrypt: %s\n", fn.c_str(), strerror(errno));
+		oaes_free(&ctx);
 		return -1;
 	}
 	read_len = fread(buffer, sizeof(uint8_t), 4096, f);
 	if (read_len <= 0) {
-		LOGERR("Read size during try decrypt failed\n");
+		LOGERR("Read size during try decrypt failed: %s\n", strerror(errno));
 		fclose(f);
+		oaes_free(&ctx);
 		return -1;
 	}
 	if (oaes_decrypt(ctx, buffer, read_len, NULL, &out_len) != OAES_RET_SUCCESS) {
 		LOGERR("Error: Failed to retrieve required buffer size for trying decryption.\n");
 		fclose(f);
+		oaes_free(&ctx);
 		return -1;
 	}
 	buffer_out = (uint8_t *) calloc(out_len, sizeof(char));
 	if (buffer_out == NULL) {
 		LOGERR("Failed to allocate output buffer for try decrypt.\n");
 		fclose(f);
+		oaes_free(&ctx);
 		return -1;
 	}
 	if (oaes_decrypt(ctx, buffer, read_len, buffer_out, &out_len) != OAES_RET_SUCCESS) {
 		LOGERR("Failed to decrypt file '%s'\n", fn.c_str());
 		fclose(f);
 		free(buffer_out);
+		oaes_free(&ctx);
 		return 0;
 	}
 	fclose(f);
+	oaes_free(&ctx);
 	if (out_len < 2) {
-		LOGINFO("Successfully decrypted '%s' but read length %i too small.\n", fn.c_str(), out_len);
+		LOGINFO("Successfully decrypted '%s' but read length too small.\n", fn.c_str());
 		free(buffer_out);
 		return 1; // Decrypted successfully
 	}
@@ -382,73 +356,66 @@ void TWFunc::install_htc_dumlock(void) {
 	if (!PartitionManager.Mount_By_Path("/data", true))
 		return;
 
-	gui_print("Installing HTC Dumlock to system...\n");
+	gui_msg("install_dumlock=Installing HTC Dumlock to system...");
 	copy_file(TWHTCD_PATH "htcdumlocksys", "/system/bin/htcdumlock", 0755);
 	if (!Path_Exists("/system/bin/flash_image")) {
-		gui_print("Installing flash_image...\n");
+		LOGINFO("Installing flash_image...\n");
 		copy_file(TWHTCD_PATH "flash_imagesys", "/system/bin/flash_image", 0755);
 		need_libs = 1;
 	} else
-		gui_print("flash_image is already installed, skipping...\n");
+		LOGINFO("flash_image is already installed, skipping...\n");
 	if (!Path_Exists("/system/bin/dump_image")) {
-		gui_print("Installing dump_image...\n");
+		LOGINFO("Installing dump_image...\n");
 		copy_file(TWHTCD_PATH "dump_imagesys", "/system/bin/dump_image", 0755);
 		need_libs = 1;
 	} else
-		gui_print("dump_image is already installed, skipping...\n");
+		LOGINFO("dump_image is already installed, skipping...\n");
 	if (need_libs) {
-		gui_print("Installing libs needed for flash_image and dump_image...\n");
+		LOGINFO("Installing libs needed for flash_image and dump_image...\n");
 		copy_file(TWHTCD_PATH "libbmlutils.so", "/system/lib/libbmlutils.so", 0644);
 		copy_file(TWHTCD_PATH "libflashutils.so", "/system/lib/libflashutils.so", 0644);
 		copy_file(TWHTCD_PATH "libmmcutils.so", "/system/lib/libmmcutils.so", 0644);
 		copy_file(TWHTCD_PATH "libmtdutils.so", "/system/lib/libmtdutils.so", 0644);
 	}
-	gui_print("Installing HTC Dumlock app...\n");
+	LOGINFO("Installing HTC Dumlock app...\n");
 	mkdir("/data/app", 0777);
 	unlink("/data/app/com.teamwin.htcdumlock*");
 	copy_file(TWHTCD_PATH "HTCDumlock.apk", "/data/app/com.teamwin.htcdumlock.apk", 0777);
 	sync();
-	gui_print("HTC Dumlock is installed.\n");
+	gui_msg("done=Done.");
 }
 
 void TWFunc::htc_dumlock_restore_original_boot(void) {
 	if (!PartitionManager.Mount_By_Path("/sdcard", true))
 		return;
 
-	gui_print("Restoring original boot...\n");
+	gui_msg("dumlock_restore=Restoring original boot...");
 	Exec_Cmd("htcdumlock restore");
-	gui_print("Original boot restored.\n");
+	gui_msg("done=Done.");
 }
 
 void TWFunc::htc_dumlock_reflash_recovery_to_boot(void) {
 	if (!PartitionManager.Mount_By_Path("/sdcard", true))
 		return;
-	gui_print("Reflashing recovery to boot...\n");
+	gui_msg("dumlock_reflash=Reflashing recovery to boot...");
 	Exec_Cmd("htcdumlock recovery noreboot");
-	gui_print("Recovery is flashed to boot.\n");
+	gui_msg("done=Done.");
 }
 
 int TWFunc::Recursive_Mkdir(string Path) {
-	string pathCpy = Path;
-	string wholePath;
-	size_t pos = pathCpy.find("/", 2);
-
-	while (pos != string::npos)
-	{
-		wholePath = pathCpy.substr(0, pos);
-		if (!TWFunc::Path_Exists(wholePath)) {
-			if (mkdir(wholePath.c_str(), 0777)) {
-				LOGERR("Unable to create folder: %s  (errno=%d)\n", wholePath.c_str(), errno);
+	std::vector<std::string> parts = Split_String(Path, "/", true);
+	std::string cur_path;
+	for (size_t i = 0; i < parts.size(); ++i) {
+		cur_path += "/" + parts[i];
+		if (!TWFunc::Path_Exists(cur_path)) {
+			if (mkdir(cur_path.c_str(), 0777)) {
+				gui_msg(Msg(msg::kError, "create_folder_strerr=Can not create '{1}' folder ({2}).")(cur_path)(strerror(errno)));
 				return false;
 			} else {
-				tw_set_default_metadata(wholePath.c_str());
+				tw_set_default_metadata(cur_path.c_str());
 			}
 		}
-
-		pos = pathCpy.find("/", pos + 1);
 	}
-	if (mkdir(wholePath.c_str(), 0777) && errno != EEXIST)
-		return false;
 	return true;
 }
 
@@ -597,10 +564,10 @@ void TWFunc::check_and_run_script(const char* script_file, const char* display_n
 	// Check for and run startup script if script exists
 	struct stat st;
 	if (stat(script_file, &st) == 0) {
-		gui_print("Running %s script...\n", display_name);
+		gui_msg(Msg("run_script=Running {1} script...")(display_name));
 		chmod(script_file, S_IRWXU | S_IRGRP | S_IXGRP | S_IROTH | S_IXOTH);
 		TWFunc::Exec_Cmd(script_file);
-		gui_print("\nFinished running %s script.\n", display_name);
+		gui_msg("done=Done.");
 	}
 }
 
@@ -610,7 +577,7 @@ int TWFunc::removeDir(const string path, bool skipParent) {
 	string new_path;
 
 	if (d == NULL) {
-		LOGERR("Error opening dir: '%s'\n", path.c_str());
+		gui_msg(Msg(msg::kError, "error_opening_strerr=Error opening: '{1}' ({2})")(path)(strerror(errno)));
 		return -1;
 	}
 
@@ -723,13 +690,9 @@ int TWFunc::read_file(string fn, uint64_t& results) {
 	return -1;
 }
 
-int TWFunc::write_file(string fn, const string& line) {
-	return write_file(fn, line, "we");
-}
-
-int TWFunc::write_file(string fn, const string& line, const char *mode) {
+int TWFunc::write_file(string fn, string& line) {
 	FILE *file;
-	file = fopen(fn.c_str(), mode);
+	file = fopen(fn.c_str(), "w");
 	if (file != NULL) {
 		fwrite(line.c_str(), line.size(), 1, file);
 		fclose(file);
@@ -773,7 +736,7 @@ bool TWFunc::Try_Decrypting_Backup(string Restore_Path, string Password) {
 	Restore_Path += "/";
 	d = opendir(Restore_Path.c_str());
 	if (d == NULL) {
-		LOGERR("Error opening '%s'\n", Restore_Path.c_str());
+		gui_msg(Msg(msg::kError, "error_opening_strerr=Error opening: '{1}' ({2})")(Restore_Path)(strerror(errno)));
 		return false;
 	}
 
@@ -1018,20 +981,19 @@ bool TWFunc::Create_Dir_Recursive(const std::string& path, mode_t mode, uid_t ui
 
 int TWFunc::Set_Brightness(std::string brightness_value)
 {
+	int result = -1;
+	std::string secondary_brightness_file;
 
-	std::string brightness_file = DataManager::GetStrValue("tw_brightness_file");;
-
-	if (brightness_file.compare("/nobrightness") != 0) {
-		std::string secondary_brightness_file = DataManager::GetStrValue("tw_secondary_brightness_file");
+	if (DataManager::GetIntValue("tw_has_brightnesss_file")) {
 		LOGINFO("TWFunc::Set_Brightness: Setting brightness control to %s\n", brightness_value.c_str());
-		int result = TWFunc::write_file(brightness_file, brightness_value);
-		if (secondary_brightness_file != "") {
-			LOGINFO("TWFunc::Set_Brightness: Setting SECONDARY brightness control to %s\n", brightness_value.c_str());
+		result = TWFunc::write_file(DataManager::GetStrValue("tw_brightness_file"), brightness_value);
+		DataManager::GetValue("tw_secondary_brightness_file", secondary_brightness_file);
+		if (!secondary_brightness_file.empty()) {
+			LOGINFO("TWFunc::Set_Brightness: Setting secondary brightness control to %s\n", brightness_value.c_str());
 			TWFunc::write_file(secondary_brightness_file, brightness_value);
 		}
-		return result;
 	}
-	return -1;
+	return result;
 }
 
 bool TWFunc::Toggle_MTP(bool enable) {
@@ -1073,237 +1035,30 @@ void TWFunc::Disable_Stock_Recovery_Replace(void) {
 		// Disable flashing of stock recovery
 		if (TWFunc::Path_Exists("/system/recovery-from-boot.p")) {
 			rename("/system/recovery-from-boot.p", "/system/recovery-from-boot.bak");
-			gui_print("Renamed stock recovery file in /system to prevent\nthe stock ROM from replacing TWRP.\n");
+			gui_msg("rename_stock=Renamed stock recovery file in /system to prevent the stock ROM from replacing TWRP.");
 			sync();
 		}
 		PartitionManager.UnMount_By_Path("/system", false);
 	}
 }
 
-bool TWFunc::loadTheme()
-{
-#ifndef TW_HAS_LANDSCAPE
-	DataManager::SetValue(TW_ENABLE_ROTATION, 0);
-#endif
+unsigned long long TWFunc::IOCTL_Get_Block_Size(const char* block_device) {
+	unsigned long block_device_size;
+	int ret = 0;
 
-	std::string base_xml = getDefaultThemePath(gr_get_rotation()) + "ui.xml";
-
-	if (DataManager::GetIntValue(TW_IS_ENCRYPTED))
-	{
-		if(PageManager::LoadPackage ("TWRP", base_xml, "decrypt") != 0)
-		{
-			LOGERR("Failed to load base packages.\n");
-			return false;
-		}
-		else
-		{
-#ifdef TW_HAS_LANDSCAPE
-			DataManager::SetValue(TW_ENABLE_ROTATION, 1);
-#endif
-			return true;
+	int fd = open(block_device, O_RDONLY);
+	if (fd < 0) {
+		LOGINFO("Find_Partition_Size: Failed to open '%s', (%s)\n", block_device, strerror(errno));
+	} else {
+		ret = ioctl(fd, BLKGETSIZE, &block_device_size);
+		close(fd);
+		if (ret) {
+			LOGINFO("Find_Partition_Size: ioctl error: (%s)\n", strerror(errno));
+		} else {
+			return (unsigned long long)(block_device_size) * 512LLU;
 		}
 	}
-
-	// This is for kindle fire apparently.
-	// It is used to flash fire fire fire bootloader
-	if (PageManager::LoadPackage("TWRP", "/script/ui.xml", "main") == 0)
-	{
-		DataManager::SetValue(TW_ENABLE_ROTATION, 0);
-		return true;
-	}
-
-	std::string theme_path = DataManager::GetSettingsStoragePath();
-	if (!PartitionManager.Mount_Settings_Storage(false))
-	{
-		int retry_count = 5;
-		while (retry_count > 0 && !PartitionManager.Mount_Settings_Storage(false))
-		{
-			usleep (500000);
-			retry_count--;
-		}
-	}
-
-#ifndef TW_OEM_BUILD
-	if (PartitionManager.Mount_Settings_Storage(false))
-	{
-		theme_path += getZIPThemePath(gr_get_rotation());
-		if(PageManager::LoadPackage("TWRP", theme_path, "main") == 0)
-		{
-#ifdef TW_HAS_LANDSCAPE
-			DataManager::SetValue(TW_ENABLE_ROTATION, 1);
-#endif
-			return true;
-		}
-	}
-	else
-		LOGERR("Unable to mount %s during GUI startup.\n", theme_path.c_str());
-#endif
-
-	if(PageManager::LoadPackage("TWRP", base_xml, "main") != 0)
-	{
-		LOGERR("Failed to load base packages.\n");
-		return false;
-	}
-	else
-	{
-#ifdef TW_HAS_LANDSCAPE
-		DataManager::SetValue(TW_ENABLE_ROTATION, 1);
-#endif
-		return true;
-	}
+	return 0;
 }
-
-bool TWFunc::reloadTheme()
-{
-	std::string theme_path = DataManager::GetSettingsStoragePath();
-	if (PartitionManager.Mount_By_Path(theme_path.c_str(), 1))
-	{
-		theme_path += getZIPThemePath(gr_get_rotation());
-		if(PageManager::ReloadPackage("TWRP", theme_path) == 0)
-		{
-#ifdef TW_HAS_LANDSCAPE
-			DataManager::SetValue(TW_ENABLE_ROTATION, 1);
-#endif
-			return true;
-		}
-	}
-	else
-		LOGERR("Unable to mount %s during reload function startup.\n", theme_path.c_str());
-
-	// Loading the custom theme failed - try loading the stock theme
-	LOGINFO("Attempting to reload stock theme...\n");
-	theme_path = getDefaultThemePath(gr_get_rotation()) + "ui.xml";
-	if (PageManager::ReloadPackage("TWRP", theme_path) != 0)
-	{
-		LOGERR("Failed to load base packages.\n");
-		return false;
-	}
-	return true;
-}
-
-std::string TWFunc::getDefaultThemePath(int rotation)
-{
-#ifndef TW_HAS_LANDSCAPE
-	return TWRES;
-#else
-	if(rotation%180 == 0)
-		return TWRES;
-	else
-		return TWRES "landscape/";
-#endif
-}
-
-std::string TWFunc::getZIPThemePath(int rotation)
-{
-#ifndef TW_HAS_LANDSCAPE
-	return "/TWRP/theme/ui.zip";
-#else
-	if(rotation%180 == 0)
-		return "/TWRP/theme/ui.zip";
-	else
-		return "/TWRP/theme/ui_landscape.zip";
-#endif
-}
-
-std::string TWFunc::getROMName()
-{
-	std::string res;
-	bool mount_state = PartitionManager.Is_Mounted_By_Path("/system");
-	std::vector<string> buildprop;
-	if (!PartitionManager.Mount_By_Path("/system", true)) {
-		return res;
-	}
-	if (TWFunc::read_file("/system/build.prop", buildprop) != 0) {
-		LOGINFO("Unable to open /system/build.prop for getting backup name.\n");
-		if (!mount_state)
-			PartitionManager.UnMount_By_Path("/system", false);
-		return res;
-	}
-	int line_count = buildprop.size();
-	int index;
-	size_t start_pos = 0, end_pos;
-	string propname;
-	for (index = 0; index < line_count; index++) {
-		end_pos = buildprop.at(index).find("=", start_pos);
-		propname = buildprop.at(index).substr(start_pos, end_pos);
-		if (propname == "ro.build.display.id") {
-			res = buildprop.at(index).substr(end_pos + 1, buildprop.at(index).size());
-			if (res.size() > MAX_BACKUP_NAME_LEN)
-				res.resize(MAX_BACKUP_NAME_LEN);
-			break;
-		}
-	}
-	if (res.empty()) {
-		LOGINFO("ro.build.display.id not found in build.prop\n");
-	}
-	if (!mount_state)
-		PartitionManager.UnMount_By_Path("/system", false);
-	return res;
-}
-
-void TWFunc::stringReplace(std::string& str, char before, char after)
-{
-	const size_t size = str.size();
-	for(size_t i = 0; i < size; ++i)
-	{
-		char& c = str[i];
-		if(c == before)
-			c = after;
-	}
-}
-
-void TWFunc::trim(std::string& str)
-{
-	size_t start = 0, len;
-	for(size_t i = 0; i < str.size() && isspace(str[i]); ++i)
-		++start;
-
-	if(start >= str.size())
-	{
-		str = "";
-		return;
-	}
-
-	len = str.size() - start;
-	for(size_t i = str.size() - 1; i > start && isspace(str[i]); --i)
-		--len;
-	str = str.substr(start, len);
-}
-
-int64_t TWFunc::getFreeSpace(const std::string& path)
-{
-	struct statfs buf; /* allocate a buffer */
-	int rc;
-
-	if (statfs(path.c_str(), &buf) < 0)
-		return -1;
-
-	return int64_t(buf.f_bsize) * int64_t(buf.f_bavail);
-}
-
-#ifdef HAVE_SELINUX
-bool TWFunc::restorecon(const std::string& path, struct selabel_handle *sh)
-{
-	struct stat info;
-	char *oldcontext, *newcontext;
-	if (lgetfilecon(path.c_str(), &oldcontext) < 0 || stat(path.c_str(), &info) < 0) {
-		LOGINFO("Couldn't get selinux context and stat() for %s\n", path.c_str());
-		return false;
-	}
-	if (selabel_lookup(sh, &newcontext, path.c_str(), info.st_mode) < 0) {
-		LOGINFO("Couldn't lookup selinux context for %s\n", path.c_str());
-		return false;
-	}
-	if (strcmp(oldcontext, newcontext) != 0) {
-		LOGINFO("Relabeling %s from %s to %s\n", path.c_str(), oldcontext, newcontext);
-		if (lsetfilecon(path.c_str(), newcontext) < 0) {
-			LOGINFO("Couldn't label %s with %s: %s\n", path.c_str(), newcontext, strerror(errno));
-		}
-	}
-	freecon(oldcontext);
-	freecon(newcontext);
-	return true;
-}
-#endif
 
 #endif // ndef BUILD_TWRPTAR_MAIN

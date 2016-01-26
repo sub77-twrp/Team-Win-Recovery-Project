@@ -17,22 +17,19 @@
 #ifndef _MINUI_H_
 #define _MINUI_H_
 
+#include "../gui/placement.h"
+
 typedef void* gr_surface;
 typedef unsigned short gr_pixel;
 
 #define FONT_TYPE_TWRP 0
-
-#ifndef TW_DISABLE_TTF
 #define FONT_TYPE_TTF  1
-#endif
 
 int gr_init(void);
 void gr_exit(void);
 
 int gr_fb_width(void);
 int gr_fb_height(void);
-int gr_screen_width(void);
-int gr_screen_height(void);
 gr_pixel *gr_fb_data(void);
 void gr_flip(void);
 int gr_fb_blank(int blank);
@@ -45,6 +42,7 @@ void gr_line(int x0, int y0, int x1, int y1, int width);
 gr_surface gr_render_circle(int radius, unsigned char r, unsigned char g, unsigned char b, unsigned char a);
 
 int gr_textEx(int x, int y, const char *s, void* font);
+int gr_textEx_scaleW(int x, int y, const char *s, void* pFont, int max_width, int placement, int scale);
 int gr_textExW(int x, int y, const char *s, void* font, int max_width);
 int gr_textExWH(int x, int y, const char *s, void* pFont, int max_width, int max_height);
 static inline int gr_text(int x, int y, const char *s)     { return gr_textEx(x, y, s, NULL); }
@@ -54,18 +52,14 @@ int gr_maxExW(const char *s, void* font, int max_width);
 
 int gr_getMaxFontHeight(void *font);
 
-void* gr_loadFont(const char* fontName);
-void gr_freeFont(void *font);
-
-#ifndef TW_DISABLE_TTF
 void *gr_ttf_loadFont(const char *filename, int size, int dpi);
+void *gr_ttf_scaleFont(void *font, int max_width, int measured_width);
 void gr_ttf_freeFont(void *font);
 int gr_ttf_textExWH(void *context, int x, int y, const char *s, void *pFont, int max_width, int max_height);
 int gr_ttf_measureEx(const char *s, void *font);
 int gr_ttf_maxExW(const char *s, void *font, int max_width);
 int gr_ttf_getMaxFontHeight(void *font);
 void gr_ttf_dump_stats(void);
-#endif
 
 void gr_blit(gr_surface source, int sx, int sy, int w, int h, int dx, int dy);
 unsigned int gr_get_width(gr_surface surface);
@@ -73,23 +67,8 @@ unsigned int gr_get_height(gr_surface surface);
 int gr_get_surface(gr_surface* surface);
 int gr_free_surface(gr_surface surface);
 
-void gr_freeze_fb(int freeze);
-void gr_set_rotation(int rot);
-int gr_get_rotation(void);
-void gr_update_surface_dimensions(void);
-
 // Functions in graphics_utils.c
 int gr_save_screenshot(const char *dest);
-
-#ifdef TW_HAS_LANDSCAPE
-inline void gr_cpy_fb_with_rotation(void *dst, void *src);
-inline void gr_rotate_90deg_4b(uint32_t *dst, uint32_t *src);
-inline void gr_rotate_90deg_2b(uint16_t *dst, uint16_t *src);
-inline void gr_rotate_270deg_4b(uint32_t *dst, uint32_t *src);
-inline void gr_rotate_270deg_2b(uint16_t *dst, uint16_t *src);
-inline void gr_rotate_180deg_4b(uint32_t *dst, uint32_t *src);
-inline void gr_rotate_180deg_2b(uint16_t *dst, uint16_t *src);
-#endif
 
 // input event structure, include <linux/input.h> for the definition.
 // see http://www.mjmwired.net/kernel/Documentation/input/ for info.

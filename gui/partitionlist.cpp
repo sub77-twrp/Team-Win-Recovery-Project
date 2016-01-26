@@ -101,8 +101,8 @@ int GUIPartitionList::Update(void)
 	if (updateList) {
 		int listSize = 0;
 
-		// Completely update the list if needed -- Used primarily for
-		// restore as the list for restore will change depending on what
+		// Completely update the list if needed -- Used primarily for 
+		// restore as the list for restore will change depending on what 
 		// partitions were backed up
 		mList.clear();
 		PartitionManager.Get_Partition_List(ListType, &mList);

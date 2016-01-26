@@ -39,7 +39,6 @@ GUIFileSelector::GUIFileSelector(xml_node<>* node) : GUIScrollList(node)
 {
 	xml_attribute<>* attr;
 	xml_node<>* child;
-	xml_node<>* parent;
 
 	mFolderIcon = mFileIcon = NULL;
 	mShowFolders = mShowFiles = mShowNavFolders = 1;
@@ -52,22 +51,7 @@ GUIFileSelector::GUIFileSelector(xml_node<>* node) : GUIScrollList(node)
 	if (child) {
 		attr = child->first_attribute("extn");
 		if (attr)
-		{
-			std::string str = attr->value();
-			const char delimiter = ';';
-			size_t idx = 0, idx_next = 0, len;
-			do
-			{
-				idx_next = str.find(delimiter, idx+1);
-				if(idx != 0 && idx != std::string::npos)
-					++idx;
-
-				len = std::min(idx_next, str.size()) - idx;
-
-				mExtn.push_back(str.substr(idx, len));
-				idx = idx_next;
-			} while(idx != std::string::npos);
-		}
+			mExtn = attr->value();
 		attr = child->first_attribute("folders");
 		if (attr)
 			mShowFolders = atoi(attr->value());
@@ -132,17 +116,6 @@ GUIFileSelector::GUIFileSelector(xml_node<>* node) : GUIScrollList(node)
 	int iconWidth = std::max(mFolderIcon->GetWidth(), mFileIcon->GetWidth());
 	int iconHeight = std::max(mFolderIcon->GetHeight(), mFileIcon->GetHeight());
 	SetMaxIconSize(iconWidth, iconHeight);
-
-	// Load excludes
-	parent = node->first_node("excludes");
-	if (parent) child = parent->first_node("exclude");
-	else        child = node->first_node("exclude");
-
-	while (child)
-	{
-		mExcludeFiles.push_back(child->value());
-		child = child->next_sibling("exclude");
-	}
 
 	// Fetch the file/folder list
 	std::string value;
@@ -295,30 +268,15 @@ int GUIFileSelector::GetFileList(const std::string folder)
 		data.lastModified = st.st_mtime;
 		data.lastStatChange = st.st_ctime;
 
-		// skip excludes
-		if(std::find(mExcludeFiles.begin(), mExcludeFiles.end(), data.fileName) != mExcludeFiles.end())
-			continue;
-
 		if (data.fileType == DT_UNKNOWN) {
 			data.fileType = TWFunc::Get_D_Type_From_Stat(path);
 		}
-
 		if (data.fileType == DT_DIR) {
 			if (mShowNavFolders || (data.fileName != "." && data.fileName != TW_FILESELECTOR_UP_A_LEVEL))
 				mFolderList.push_back(data);
 		} else if (data.fileType == DT_REG || data.fileType == DT_LNK || data.fileType == DT_BLK) {
-			if(mExtn.empty()) {
+			if (mExtn.empty() || (data.fileName.length() > mExtn.length() && data.fileName.substr(data.fileName.length() - mExtn.length()) == mExtn)) {
 				mFileList.push_back(data);
-			} else {
-				for(size_t i = 0; i < mExtn.size(); ++i)
-				{
-					const std::string& ext = mExtn[i];
-					if (ext.empty() || (data.fileName.length() > ext.length() && data.fileName.substr(data.fileName.length() - ext.length()) == ext))
-					{
-						mFileList.push_back(data);
-						break;
-					}
-				}
 			}
 		}
 	}
@@ -326,6 +284,7 @@ int GUIFileSelector::GetFileList(const std::string folder)
 
 	std::sort(mFolderList.begin(), mFolderList.end(), fileSort);
 	std::sort(mFileList.begin(), mFileList.end(), fileSort);
+
 	return 0;
 }
 
