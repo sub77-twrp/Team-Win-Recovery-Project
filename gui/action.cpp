@@ -2027,6 +2027,7 @@ int GUIAction::multirom_add_file_selected(std::string arg)
 	bool images = MultiROM::installLocNeedsImages(loc);
 	int type = DataManager::GetIntValue("tw_multirom_type");
 
+#ifdef FUCKER
 	MultiROM::clearBaseFolders();
 
 	if(type == 1 || type == 2 || type == 5)
@@ -2092,7 +2093,10 @@ int GUIAction::multirom_add_file_selected(std::string arg)
 	}
 	return 0;
 }
+#endif
 
+        return 0;
+}
 int GUIAction::multirom_change_img_size(std::string arg)
 {
 	DataManager::SetValue("tw_multirom_image_too_small", 0);
@@ -2620,7 +2624,7 @@ int GUIAction::system_image_upgrader(std::string arg)
 	if(TWFunc::Path_Exists(UBUNTU_COMMAND_FILE))
 	{
 		gui_print("\n");
-		res = TWFunc::Exec_Cmd_Show_Output("system-image-upgrader "UBUNTU_COMMAND_FILE);
+		res = TWFunc::Exec_Cmd_Show_Output("system-image-upgrader " UBUNTU_COMMAND_FILE);
 		gui_print("\n");
 
 		if(res != 0)
@@ -2630,7 +2634,7 @@ int GUIAction::system_image_upgrader(std::string arg)
 		}
 		DataManager::SetValue("system-image-upgrader-res", res);
 	} else
-		gui_print("Could not find system-image-upgrader command file: "UBUNTU_COMMAND_FILE"\n");
+		gui_print("Could not find system-image-upgrader command file: " UBUNTU_COMMAND_FILE "\n");
 
 	DataManager::SetValue("tw_page_done", 1);
 	operation_end(res);

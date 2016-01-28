@@ -281,7 +281,7 @@ std::string MROMInstaller::parseBaseFolders(bool ntfs)
 					break;
 				case 2:
 					b.size = std::min(atoi(t), ntfs ? INT_MAX : 4095);
-					MultiROM::addBaseFolder(b);
+//					MultiROM::addBaseFolder(b);
 					break;
 			}
 			t = strtok_r(NULL, ":", &itr2);

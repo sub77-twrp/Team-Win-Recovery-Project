@@ -2173,7 +2173,7 @@ void MultiROM::updateImageVariables()
 		DataManager::SetValue(std::string(name) + "_size", itr->second.size);
 	}
 }
-
+#ifdef FUCKER
 const base_folder& MultiROM::addBaseFolder(const std::string& name, int min, int def)
 {
 	base_folder b(name, min, def);
@@ -2185,7 +2185,7 @@ const base_folder& MultiROM::addBaseFolder(const base_folder& b)
 	LOGINFO("MROMInstaller: base folder: %s (min: %dMB def: %dMB)\n", b.name.c_str(), b.min_size, b.size);
 	return m_base_folders.insert(std::make_pair<std::string, base_folder>(b.name, b)).first->second;
 }
-
+#endif
 MultiROM::baseFolders& MultiROM::getBaseFolders()
 {
 	return m_base_folders;
@@ -2665,25 +2665,28 @@ void MultiROM::executeCacheScripts()
 		{
 			if(stat((path + SCRIPT_FILE_CACHE).c_str(), &info) < 0)
 				continue;
-
+#ifdef FUCKER
 			if(info.st_mtime > script.mtime)
 			{
 				script.mtime = info.st_mtime;
 				script.name = dt->d_name;
 				script.type = type;
 			}
+#endif
 		}
 		else if(type & MASK_UTOUCH)
 		{
 			if(stat((path + UBUNTU_COMMAND_FILE).c_str(), &info) < 0)
 				continue;
 
+#ifdef FUCKER
 			if(info.st_mtime > script.mtime)
 			{
 				script.mtime = info.st_mtime;
 				script.name = dt->d_name;
 				script.type = type;
 			}
+#endif
 		}
 	}
 	closedir(roms);
