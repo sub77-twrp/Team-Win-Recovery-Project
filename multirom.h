@@ -55,7 +55,7 @@ enum
 #define INTERNAL_MEM_LOC_TXT "Internal memory"
 
 // Not defined in android includes?
-#define MS_RELATIME (1<<21)
+// #define MS_RELATIME (1<<21)
 
 #define MAX_BASE_FOLDER_CNT 5
 
