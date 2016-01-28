@@ -12,6 +12,7 @@
 
 	<include>
 		<xmlfile name="watch.xml" />
+		<xmlfile name="multirom.xml" />
 	</include>
 
 	<resources>
